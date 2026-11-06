@@ -26,15 +26,18 @@ final class WebController
     private JobRepository $jobs;
     private RunRepository $runs;
     private UserRepository $users;
+    private Updater $updater;
 
     public function __construct(
         ?JobRepository $jobs = null,
         ?RunRepository $runs = null,
-        ?UserRepository $users = null
+        ?UserRepository $users = null,
+        ?Updater $updater = null
     ) {
         $this->jobs = $jobs ?? new JobRepository();
         $this->runs = $runs ?? new RunRepository();
         $this->users = $users ?? new UserRepository();
+        $this->updater = $updater ?? new Updater();
     }
 
     public function handle(string $method, string $uri): void
@@ -76,6 +79,10 @@ final class WebController
         }
         if ($path === '/perfil') {
             $this->profile($method);
+            return;
+        }
+        if ($path === '/updates') {
+            $this->updatesPage();
             return;
         }
         if (preg_match('#^/jobs/(\d+)/edit$#', $path, $m) === 1) {
@@ -313,6 +320,31 @@ final class WebController
 
         $this->flash('ok', "Tarea #{$id} eliminada.");
         $this->redirect('/');
+    }
+
+    // ---------------------------------------------------------- actualizaciones --
+
+    private function updatesPage(): void
+    {
+        $forzar = isset($_GET['refresh']);
+        $check = $this->updater->check($forzar);
+        $instalada = $this->updater->installedVersion();
+        $release = $check['release'];
+
+        $alDia = $release !== null
+            && version_compare($instalada, (string)$release['version'], '>=');
+
+        $this->render('Actualizaciones', 'updates', [
+            'active' => 'updates',
+            'instalada' => $instalada,
+            'release' => $release,
+            'error' => $check['error'],
+            'cacheada' => $check['cached'],
+            'comprobada' => $check['checkedAt'],
+            'alDia' => $alDia,
+            'repo' => $this->updater->repo(),
+            'csrf' => Auth::csrfToken(),
+        ]);
     }
 
     // ------------------------------------------------------------ helpers --

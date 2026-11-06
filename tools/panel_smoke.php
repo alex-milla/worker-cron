@@ -237,6 +237,52 @@ try {
     check('contraseña vieja ya no', $users->verify('gestor', 'test1234') === null);
     check('password_changed_at queda sellado', !empty($fila['password_changed_at']));
     check('last_login_at se actualiza', !empty($fila['last_login_at']));
+
+    // ------------------------------------------------ 10. actualizaciones --
+    $llamadas = 0;
+    $fake = function (string $url, array $headers) use (&$llamadas): string {
+        $llamadas++;
+        return json_encode([
+            'tag_name' => 'v9.9.9',
+            'body' => 'notas de prueba',
+            'zipball_url' => 'https://example.com/z.zip',
+            'html_url' => 'https://example.com/r',
+            'published_at' => '2026-11-06T00:00:00Z',
+        ], JSON_THROW_ON_ERROR);
+    };
+
+    $up = new \CronPanel\Updater($fake, $pdo);
+    $r1 = $up->check();
+    check('updater parsea la version', ($r1['release']['version'] ?? null) === '9.9.9');
+    check('updater no viene de cache', $r1['cached'] === false);
+    check('updater llamó una vez', $llamadas === 1);
+    check('updater lee la version instalada', $up->installedVersion() !== '');
+
+    $r2 = $up->check();
+    check('segunda consulta usa cache', $r2['cached'] === true && $llamadas === 1);
+
+    $r3 = $up->check(true);
+    check('forzar ignora la cache', $r3['cached'] === false && $llamadas === 2);
+
+    $viejo = json_encode([
+        'checkedAt' => time() - 1900,
+        'release' => ['version' => '1.0.0'],
+        'error' => null,
+    ]);
+    $pdo->prepare(
+        "INSERT INTO meta (key, value) VALUES ('github_release', ?)"
+        . ' ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+    )->execute([$viejo]);
+    $r4 = $up->check();
+    check('cache caducada se ignora', $r4['cached'] === false && $llamadas === 3);
+
+    $fallo = function (): string {
+        throw new \RuntimeException('sin conexión');
+    };
+    $upFallo = new \CronPanel\Updater($fallo, $pdo);
+    $r5 = $upFallo->check(true);
+    check('un error de red no rompe', $r5['release'] === null && $r5['error'] === 'sin conexión');
+    check('el error tambien se cachea', $upFallo->check()['cached'] === true);
 } catch (Throwable $e) {
     $fallos++;
     echo 'EXCEPCIÓN: ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ")\n";

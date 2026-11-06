@@ -42,6 +42,8 @@ $user = $user ?? '';
             <a class="sidebar-link<?= $active === 'runs' ? ' active' : '' ?>" href="<?= e(url('/runs')) ?>">
                 <?= icon('list') ?>Ejecuciones</a>
             <div class="sidebar-group-label">Sistema</div>
+            <a class="sidebar-link<?= $active === 'updates' ? ' active' : '' ?>" href="<?= e(url('/updates')) ?>">
+                <?= icon('update') ?>Actualizaciones</a>
             <a class="sidebar-link<?= $active === 'profile' ? ' active' : '' ?>" href="<?= e(url('/perfil')) ?>">
                 <?= icon('person') ?>Perfil y contraseña</a>
         </nav>

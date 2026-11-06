@@ -119,5 +119,25 @@ Estados válidos en `results`: `ok`, `failed`, `timeout`. El `output` se trunca
 a 64 KiB y el cuerpo máximo es 1 MiB. Si Apache no pasa la cabecera
 `Authorization`, el `.htaccess` ya la reexpone vía entorno.
 
+### Actualizaciones del panel
+
+El panel tiene una pantalla **informativa** en «Actualizaciones»: consulta
+`releases/latest` de GitHub (el repo es público, no hace falta token) y te dice
+si hay versión nueva, con las notas y el enlace de descarga. La respuesta se
+**cachea 30 min** en la tabla `meta` para no agotar el límite de la API
+(60 peticiones/hora por IP, y la del hosting es compartida).
+
+**El panel no se actualiza solo**: se despliega subiendo `public_html/` al
+hosting. El auto-update de verdad está en el **worker** (LXC), que sí puede
+reescribir su propio código con backup previo.
+
+Ajustes opcionales en `config.php`:
+
+| Clave | Por defecto | Para qué |
+|---|---|---|
+| `github_repo` | `alex-milla/worker-cron` | repositorio del que se leen las releases |
+| `github_api_base` | `https://api.github.com` | GitHub Enterprise o pruebas |
+| `github_token` | vacío | solo si el repositorio pasa a privado |
+
 Ojo: el auto-update del worker **solo sincroniza `worker/`**. Los cambios en
 `public_html/` se despliegan subiendo los ficheros al hosting.

@@ -255,6 +255,7 @@ textarea { font-family: ui-monospace, monospace; min-height: 96px; resize: verti
     padding: .5rem .7rem; background: var(--surface-2); border-radius: .4rem;
     font-size: .75rem; white-space: pre-wrap; word-break: break-word;
 }
+.output-wide { max-width: 100%; max-height: 420px; }
 details summary { cursor: pointer; }
 
 /* ===== login ===== */

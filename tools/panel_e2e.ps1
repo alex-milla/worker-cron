@@ -46,6 +46,9 @@ return [
     'app_name' => 'Cron Scheduler E2E',
     'timezone' => 'Europe/Madrid',
     'debug' => false,
+    // Comprobación de actualizaciones: host inexistente -> fallo rápido y local
+    'github_repo' => 'e2e/nonexistent',
+    'github_api_base' => 'http://127.0.0.1:1',
 ];
 "@
 [IO.File]::WriteAllText("$tmp/config.php", $cfg, (New-Object Text.UTF8Encoding $false))
@@ -250,6 +253,18 @@ try {
     Check 'usuario cambiado' ($r.Content -match 'Usuario actualizado')
     Check 'el nombre nuevo sale en el shell' ($r.Content -match 'gestor')
     $csrf = Get-Csrf $r.Content
+
+    # 15f. actualizaciones (informativa; sin red real gracias a github_api_base)
+    $r = Invoke-WebRequest -Uri "$base/updates" -WebSession $s
+    Check 'GET /updates = 200' ($r.StatusCode -eq 200)
+    Check 'muestra la versión instalada' ($r.Content -match 'v0\.1\.[0-9]+')
+    Check 'avisa si no pudo consultar' ($r.Content -match 'No se pudo consultar GitHub')
+    Check 'enlace en el sidebar' ($r.Content -match 'Actualizaciones')
+    Check 'explica cómo se actualiza cada mitad' ($r.Content -match 'Cómo se actualiza cada mitad')
+
+    $r = Invoke-WebRequest -Uri "$base/updates" -MaximumRedirection 5 `
+        -WebSession (New-Object Microsoft.PowerShell.Commands.WebRequestSession)
+    Check '/updates requiere sesión' ($r.Content -match 'Iniciar sesión')
 
     # 16. logout y login con las credenciales nuevas
     $r = Invoke-WebRequest -Uri "$base/logout" -Method Post -Body @{ csrf = $csrf } `

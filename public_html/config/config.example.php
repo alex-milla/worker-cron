@@ -23,6 +23,14 @@ return [
     // Versión de la estructura de API soportada por el hosting.
     'api_version' => 'v1',
 
+    // --- Actualizaciones (pantalla informativa del panel) ---
+    // Repositorio del que se leen las releases. Público por defecto.
+    'github_repo' => 'alex-milla/worker-cron',
+    // Base de la API; solo se cambia para GitHub Enterprise o pruebas.
+    'github_api_base' => 'https://api.github.com',
+    // Opcional: solo hace falta si el repositorio pasa a privado.
+    'github_token' => '',
+
     // --- Aplicación ---
     // Prefijo si public_html/ no es la raíz del dominio (p. ej. '/cron').
     'base_path' => '',

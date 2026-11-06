@@ -185,48 +185,78 @@ final class Updater
 
     private function request(string $url): string
     {
-        global $CRONPANEL_CONFIG;
-
-        $headers = [
-            'Accept: application/vnd.github+json',
-            'User-Agent: cronpanel/' . $this->installedVersion(),
-        ];
         $token = $this->token();
-        if ($token !== '') {
-            $headers[] = 'Authorization: Bearer ' . $token;
-        }
+        $origHost = (string)parse_url($url, PHP_URL_HOST);
+        $target = $url;
 
-        if ($this->httpGet !== null) {
-            /** @var mixed $body */
-            $body = ($this->httpGet)($url, $headers);
-            if (!is_string($body)) {
-                throw new RuntimeException('respuesta HTTP inválida');
+        for ($hop = 0; $hop <= 3; $hop++) {
+            $headers = [
+                'Accept: application/vnd.github+json',
+                'User-Agent: cronpanel/' . $this->installedVersion(),
+            ];
+            // el token solo viaja al host original (el zipball redirige a codeload)
+            if ($token !== '' && (string)parse_url($target, PHP_URL_HOST) === $origHost) {
+                $headers[] = 'Authorization: Bearer ' . $token;
             }
+
+            if ($this->httpGet !== null) {
+                /** @var mixed $body */
+                $body = ($this->httpGet)($target, $headers);
+                if (!is_string($body)) {
+                    throw new RuntimeException('respuesta HTTP inválida');
+                }
+
+                return $body;
+            }
+
+            [$status, $body, $location] = $this->fetchOnce($target, $headers);
+
+            if ($status === 200) {
+                return $body;
+            }
+            if (in_array($status, [301, 302, 303, 307, 308], true)
+                && $location !== null
+                && $hop < 3) {
+                $target = $location;
+                continue;
+            }
+
+            $this->assertStatus($status);
 
             return $body;
         }
 
+        throw new RuntimeException('demasiadas redirecciones desde GitHub');
+    }
+
+    /**
+     * Una petición, sin seguir redirecciones (las gestiona `request()`).
+     *
+     * @param list<string> $headers
+     * @return array{0:int, 1:string, 2:?string} [status, body, location]
+     */
+    private function fetchOnce(string $url, array $headers): array
+    {
         if (function_exists('curl_init')) {
             $ch = curl_init($url);
             curl_setopt_array($ch, [
                 CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_FOLLOWLOCATION => true,
-                CURLOPT_MAXREDIRS => 3,
+                CURLOPT_FOLLOWLOCATION => false,
                 CURLOPT_CONNECTTIMEOUT => 5,
                 CURLOPT_TIMEOUT => self::TIMEOUT,
                 CURLOPT_HTTPHEADER => $headers,
             ]);
             $body = curl_exec($ch);
             $status = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            $location = curl_getinfo($ch, CURLINFO_REDIRECT_URL);
             $error = curl_error($ch);
             curl_close($ch);
 
             if ($body === false) {
                 throw new RuntimeException('sin conexión con GitHub: ' . $error);
             }
-            $this->assertStatus($status);
 
-            return (string)$body;
+            return [$status, (string)$body, is_string($location) && $location !== '' ? $location : null];
         }
 
         if (!ini_get('allow_url_fopen')) {
@@ -246,14 +276,18 @@ final class Updater
         if ($body === false) {
             throw new RuntimeException('sin conexión con GitHub');
         }
-        $status = 200;
-        if (isset($http_response_header[0])
-            && preg_match('#\s(\d{3})\s#', (string)$http_response_header[0], $m) === 1) {
-            $status = (int)$m[1];
-        }
-        $this->assertStatus($status);
 
-        return (string)$body;
+        $status = 200;
+        $location = null;
+        foreach ($http_response_header ?? [] as $header) {
+            if (preg_match('#^HTTP/\S+\s+(\d{3})#', $header, $m) === 1) {
+                $status = (int)$m[1];
+            } elseif (stripos($header, 'Location:') === 0) {
+                $location = trim(substr($header, 9));
+            }
+        }
+
+        return [$status, (string)$body, $location];
     }
 
     private function assertStatus(int $status): void

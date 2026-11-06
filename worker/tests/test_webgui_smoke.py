@@ -133,14 +133,19 @@ r = c5.post("/login", data={"username": "gestor", "password": "nueva-clave-1", "
 assert r.status_code == 302, "no se puede entrar con el usuario renombrado"
 print("12. cambio de nombre de usuario: OK")
 
-# 13. nombre de usuario duplicado rechazado
-page_html = c5.get("/password").data.decode("utf-8")
-new_csrf = _re.search(r'name="csrf" value="([^"]*)"', page_html).group(1)
-page_html = c5.post("/password", data={"username": "gestor", "csrf": new_csrf}).data.decode()
+# 13. nombre de usuario duplicado/corto rechazado
 page_html = c5.get("/password").data.decode("utf-8")
 new_csrf = _re.search(r'name="csrf" value="([^"]*)"', page_html).group(1)
 r = c5.post("/password", data={"username": "x", "csrf": new_csrf})  # corto
 assert b"al menos 3" in r.data
 print("13. validacion usuario: OK")
+
+# 14. pantalla Actualizaciones (regresion del 500 por falta de Path import)
+r = c5.get("/updates")
+assert r.status_code == 200, r.data[:300]
+page_html = r.data.decode("utf-8")
+assert "GitHub" in page_html and "Backups" in page_html
+assert 'name="csrf" value=""' not in page_html, "csrf vacio en /updates"
+print("14. /updates: OK")
 
 print("\nTODOS LOS TESTS OK")

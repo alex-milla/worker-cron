@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import secrets
 from datetime import datetime
+from pathlib import Path
 
 from croniter import croniter
 from flask import (

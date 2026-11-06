@@ -67,8 +67,13 @@ abre la conexión (`src/Database.php`), así que ya no hay que cargar
 bloqueados desde el `.htaccess` raíz.
 
 El panel ya es funcional: **login con sesión + CSRF**, dashboard, alta/edición
-de tareas y activar/pausar/borrar. La API del worker (`/api/v1/*`) sigue en 501
+de tareas, activar/pausar/borrar y **«Perfil y contraseña»** (cambiar usuario y
+contraseña sin tocar ficheros). La API del worker (`/api/v1/*`) sigue en 501
 hasta la fase 4, así que **el worker todavía no sincroniza nada**.
+
+> La contraseña se **siembra desde `config.php`** la primera vez (tabla
+> `users`) y a partir de ahí se cambia desde «Perfil y contraseña». Al
+> cambiarla se cierran las demás sesiones abiertas.
 
 Comprobar el panel sin desplegar nada (PHP en el PATH):
 

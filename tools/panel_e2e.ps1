@@ -158,10 +158,64 @@ try {
     $dash = (Invoke-WebRequest -Uri "$base/" -WebSession $s).Content
     Check 'dashboard vacío' ($dash -match 'Todavía no hay tareas')
 
-    # 15. logout
+    # 15. perfil
+    $r = Invoke-WebRequest -Uri "$base/perfil" -WebSession $s
+    Check 'GET /perfil = 200' ($r.StatusCode -eq 200)
+    Check 'perfil en el sidebar' ($r.Content -match 'Perfil y contraseña')
+    $csrf = Get-Csrf $r.Content
+
+    # 15a. contraseña actual incorrecta
+    $r = Invoke-WebRequest -Uri "$base/perfil" -Method Post -WebSession $s -Body @{
+        username = 'admin'; current_password = 'mala'; csrf = $csrf
+    }
+    Check 'perfil: actual incorrecta' ($r.StatusCode -eq 200 -and $r.Content -match 'contraseña actual no es correcta')
+
+    # 15b. segunda sesión (para probar la invalidación)
+    $s2 = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $r = Invoke-WebRequest -Uri "$base/login" -WebSession $s2
+    $csrf2 = Get-Csrf $r.Content
+    $r = Invoke-WebRequest -Uri "$base/login" -Method Post -WebSession $s2 -MaximumRedirection 5 `
+        -Body @{ username = 'admin'; password = 'test1234'; csrf = $csrf2 }
+    Check 'segunda sesión abierta' ($r.Content -match 'Tareas programadas')
+
+    # 15c. cambiar contraseña
+    $r = Invoke-WebRequest -Uri "$base/perfil" -Method Post -WebSession $s -MaximumRedirection 5 -Body @{
+        username = 'admin'; current_password = 'test1234'
+        new_password = 'nueva-clave-9'; new_password2 = 'nueva-clave-9'; csrf = $csrf
+    }
+    Check 'contraseña cambiada' ($r.Content -match 'Contraseña actualizada')
+    $csrf = Get-Csrf $r.Content
+
+    # 15d. la otra sesión queda invalidada
+    $r = Invoke-WebRequest -Uri "$base/" -WebSession $s2 -MaximumRedirection 5
+    Check 'sesión paralela invalidada' ($r.Content -match 'Iniciar sesión')
+
+    # 15e. cambiar usuario
+    $r = Invoke-WebRequest -Uri "$base/perfil" -Method Post -WebSession $s -MaximumRedirection 5 -Body @{
+        username = 'gestor'; current_password = 'nueva-clave-9'; csrf = $csrf
+    }
+    Check 'usuario cambiado' ($r.Content -match 'Usuario actualizado')
+    Check 'el nombre nuevo sale en el shell' ($r.Content -match 'gestor')
+    $csrf = Get-Csrf $r.Content
+
+    # 16. logout y login con las credenciales nuevas
     $r = Invoke-WebRequest -Uri "$base/logout" -Method Post -Body @{ csrf = $csrf } `
         -WebSession $s -MaximumRedirection 5
     Check 'logout vuelve al login' ($r.Content -match 'Iniciar sesión')
+
+    $s3 = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $r = Invoke-WebRequest -Uri "$base/login" -WebSession $s3
+    $csrf3 = Get-Csrf $r.Content
+    $r = Invoke-WebRequest -Uri "$base/login" -Method Post -WebSession $s3 -MaximumRedirection 5 `
+        -Body @{ username = 'gestor'; password = 'nueva-clave-9'; csrf = $csrf3 }
+    Check 'login con usuario y clave nuevos' ($r.Content -match 'Tareas programadas')
+
+    $s4 = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $r = Invoke-WebRequest -Uri "$base/login" -WebSession $s4
+    $csrf4 = Get-Csrf $r.Content
+    $r = Invoke-WebRequest -Uri "$base/login" -Method Post -WebSession $s4 `
+        -Body @{ username = 'admin'; password = 'test1234'; csrf = $csrf4 }
+    Check 'las credenciales viejas ya no valen' ($r.Content -match 'Credenciales inválidas')
 } catch {
     $fallos++
     Write-Output "EXCEPCIÓN: $($_.Exception.Message)"

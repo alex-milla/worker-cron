@@ -7,7 +7,10 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     pass_hash TEXT NOT NULL,
     is_admin INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login_at TEXT,
+    /* sello temporal del último cambio de contraseña: invalida sesiones viejas */
+    password_changed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS jobs (

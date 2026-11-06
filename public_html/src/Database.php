@@ -45,6 +45,7 @@ final class Database
         $pdo->exec('PRAGMA foreign_keys = ON');
 
         self::ensureSchema($pdo);
+        self::migrate($pdo);
 
         self::$pdo = $pdo;
 
@@ -85,5 +86,26 @@ final class Database
         $stmt->execute([$name]);
 
         return $stmt->fetchColumn() !== false;
+    }
+
+    /**
+     * Columnas añadidas después de la primera versión del esquema.
+     *
+     * `CREATE TABLE IF NOT EXISTS` no añade columnas a una tabla que ya
+     * existe, así que las BD creadas con v0.1.4/v0.1.5 necesitan este ALTER.
+     */
+    private static function migrate(PDO $pdo): void
+    {
+        $columns = [];
+        foreach ($pdo->query('PRAGMA table_info(users)') as $row) {
+            $columns[(string)$row['name']] = true;
+        }
+
+        if (!isset($columns['last_login_at'])) {
+            $pdo->exec('ALTER TABLE users ADD COLUMN last_login_at TEXT');
+        }
+        if (!isset($columns['password_changed_at'])) {
+            $pdo->exec('ALTER TABLE users ADD COLUMN password_changed_at TEXT');
+        }
     }
 }

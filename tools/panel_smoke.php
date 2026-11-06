@@ -19,7 +19,11 @@ ini_set('display_errors', '1');
 define('CRONPANEL_ROOT', dirname(__DIR__) . '/public_html');
 
 $tmpDir = sys_get_temp_dir() . '/panel-smoke-' . bin2hex(random_bytes(4));
-$CRONPANEL_CONFIG = ['db_path' => $tmpDir . '/panel.sqlite'];
+$CRONPANEL_CONFIG = [
+    'db_path' => $tmpDir . '/panel.sqlite',
+    'admin_user' => 'admin',
+    'admin_pass_hash' => password_hash('test1234', PASSWORD_DEFAULT),
+];
 
 // Mismo autoloader que public_html/src/bootstrap.php: así el test valida
 // también que namespace y nombre de fichero se corresponden.
@@ -189,6 +193,50 @@ try {
     $repo->deleteJob($id2);
     $runs = (int)$pdo->query('SELECT COUNT(*) FROM job_runs')->fetchColumn();
     check('ON DELETE CASCADE limpia job_runs', $runs === 0, "runs={$runs}");
+
+    // ------------------------------------------------------- 9. usuarios --
+    $users = new \CronPanel\UserRepository($pdo);
+    check('tabla users vacía al empezar', $users->count() === 0);
+
+    $creado = $users->ensureBootstrapUser();
+    check('bootstrap crea el usuario de config.php', $creado !== null && $creado['username'] === 'admin');
+    check('bootstrap es idempotente', $users->ensureBootstrapUser() === null && $users->count() === 1);
+
+    check('verify con la contraseña buena', $users->verify('admin', 'test1234') !== null);
+    check('verify rechaza contraseña mala', $users->verify('admin', 'mala') === null);
+    check('verify rechaza usuario inexistente', $users->verify('nadie', 'test1234') === null);
+
+    $uid = (int)$users->findByUsername('admin')['id'];
+    check('verifyCurrentPassword correcta', $users->verifyCurrentPassword($uid, 'test1234'));
+    check('verifyCurrentPassword incorrecta', !$users->verifyCurrentPassword($uid, 'mala'));
+
+    $lanzado = false;
+    try {
+        $users->setUsername($uid, 'x');
+    } catch (InvalidArgumentException) {
+        $lanzado = true;
+    }
+    check('rechaza usuario demasiado corto', $lanzado);
+
+    $users->setUsername($uid, 'gestor');
+    check('cambio de usuario aplicado', $users->findById($uid)['username'] === 'gestor');
+    check('login con el usuario nuevo', $users->verify('gestor', 'test1234') !== null);
+    check('login con el usuario viejo falla', $users->verify('admin', 'test1234') === null);
+
+    $lanzado = false;
+    try {
+        $users->setPassword($uid, 'corta');
+    } catch (InvalidArgumentException) {
+        $lanzado = true;
+    }
+    check('rechaza contraseña demasiado corta', $lanzado);
+
+    $users->setPassword($uid, 'nueva-clave-9');
+    $fila = $users->findById($uid);
+    check('contraseña nueva funciona', $users->verify('gestor', 'nueva-clave-9') !== null);
+    check('contraseña vieja ya no', $users->verify('gestor', 'test1234') === null);
+    check('password_changed_at queda sellado', !empty($fila['password_changed_at']));
+    check('last_login_at se actualiza', !empty($fila['last_login_at']));
 } catch (Throwable $e) {
     $fallos++;
     echo 'EXCEPCIÓN: ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ")\n";

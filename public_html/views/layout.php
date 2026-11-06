@@ -41,6 +41,9 @@ $user = $user ?? '';
                 <?= icon('plus') ?>Nueva tarea</a>
             <a class="sidebar-link<?= $active === 'runs' ? ' active' : '' ?>" href="<?= e(url('/runs')) ?>">
                 <?= icon('list') ?>Ejecuciones</a>
+            <div class="sidebar-group-label">Sistema</div>
+            <a class="sidebar-link<?= $active === 'profile' ? ' active' : '' ?>" href="<?= e(url('/perfil')) ?>">
+                <?= icon('person') ?>Perfil y contraseña</a>
         </nav>
         <div class="sidebar-foot mono">v<?= e($version) ?></div>
     </aside>
@@ -61,6 +64,7 @@ $user = $user ?? '';
                         <span class="user-role">admin</span><?= icon('chevron') ?></button>
                     <ul class="user-panel">
                         <li><span class="user-panel-info"><?= e($user) ?></span></li>
+                        <li><a href="<?= e(url('/perfil')) ?>"><?= icon('person') ?>Perfil y contraseña</a></li>
                         <li class="sep" role="separator"></li>
                         <li><form method="post" action="<?= e(url('/logout')) ?>">
                             <input type="hidden" name="csrf" value="<?= e($csrf) ?>">

@@ -25,11 +25,16 @@ final class WebController
 {
     private JobRepository $jobs;
     private RunRepository $runs;
+    private UserRepository $users;
 
-    public function __construct(?JobRepository $jobs = null, ?RunRepository $runs = null)
-    {
+    public function __construct(
+        ?JobRepository $jobs = null,
+        ?RunRepository $runs = null,
+        ?UserRepository $users = null
+    ) {
         $this->jobs = $jobs ?? new JobRepository();
         $this->runs = $runs ?? new RunRepository();
+        $this->users = $users ?? new UserRepository();
     }
 
     public function handle(string $method, string $uri): void
@@ -67,6 +72,10 @@ final class WebController
         }
         if ($path === '/runs') {
             $this->runsPage();
+            return;
+        }
+        if ($path === '/perfil') {
+            $this->profile($method);
             return;
         }
         if (preg_match('#^/jobs/(\d+)/edit$#', $path, $m) === 1) {
@@ -146,6 +155,81 @@ final class WebController
             'active' => 'runs',
             'runs' => $this->runs->recent(50),
             'revision' => $this->jobs->revision(),
+        ]);
+    }
+
+    // -------------------------------------------------------------- perfil --
+
+    private function profile(string $method): void
+    {
+        $uid = Auth::id();
+        $user = $this->users->findById($uid);
+        if ($user === null) {
+            $this->redirect('/logout');
+        }
+
+        $error = '';
+        $values = ['username' => (string)$user['username']];
+
+        if ($method === 'POST') {
+            $this->requireCsrf();
+
+            $current = (string)($_POST['current_password'] ?? '');
+            $newUsername = trim((string)($_POST['username'] ?? ''));
+            $new = (string)($_POST['new_password'] ?? '');
+            $new2 = (string)($_POST['new_password2'] ?? '');
+            $values['username'] = $newUsername;
+
+            try {
+                if ($current === '') {
+                    throw new InvalidArgumentException('Escribe tu contraseña actual');
+                }
+                if (!$this->users->verifyCurrentPassword($uid, $current)) {
+                    throw new InvalidArgumentException('La contraseña actual no es correcta');
+                }
+
+                $cambioClave = ($new !== '' || $new2 !== '');
+                if ($cambioClave) {
+                    if ($new !== $new2) {
+                        throw new InvalidArgumentException('Las contraseñas nuevas no coinciden');
+                    }
+                    if (strlen($new) < 8) {
+                        throw new InvalidArgumentException(
+                            'La nueva contraseña debe tener al menos 8 caracteres'
+                        );
+                    }
+                }
+
+                $cambioUsuario = $newUsername !== '' && $newUsername !== (string)$user['username'];
+
+                if ($cambioUsuario) {
+                    $this->users->setUsername($uid, $newUsername);
+                    Auth::setUsername($newUsername);
+                    $this->flash('ok', 'Usuario actualizado.');
+                }
+                if ($cambioClave) {
+                    $this->users->setPassword($uid, $new);
+                    Auth::refreshPasswordStamp();
+                    $this->flash('ok', 'Contraseña actualizada. Las demás sesiones se han cerrado.');
+                }
+                if (!$cambioUsuario && !$cambioClave) {
+                    $this->flash('ok', 'No había cambios que guardar.');
+                }
+
+                $this->redirect('/perfil');
+            } catch (InvalidArgumentException $e) {
+                $error = $e->getMessage();
+            }
+
+            $user = $this->users->findById($uid) ?? $user;
+        }
+
+        $this->render('Perfil y contraseña', 'perfil', [
+            'active' => 'profile',
+            'user' => $user,
+            'values' => $values,
+            'error' => $error,
+            'csrf' => Auth::csrfToken(),
         ]);
     }
 

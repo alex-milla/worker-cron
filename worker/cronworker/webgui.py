@@ -472,6 +472,28 @@ DASHBOARD_CONTENT = """{% macro pill(status) %}
    {%- endif -%}
 {% endmacro %}
 <section class="card">
+  <h2>Estado del worker</h2>
+  <table>
+    <tbody>
+      <tr><th>Panel</th>
+        <td class="mono">{{ panel_url or '(sin configurar en config.yaml)' }}</td></tr>
+      <tr><th>Revisión</th><td>{{ sync.revision }}</td></tr>
+      <tr><th>Última sincronización</th>
+        <td>
+        {% if sync.at %}
+          {{ sync.at }}
+          {% if sync.ok %}<span class="pill ok">correcta</span>
+          {% else %}<span class="pill bad">error</span>{% endif %}
+        {% else %}
+          <span class="muted">todavía no se ha sincronizado</span>
+        {% endif %}
+        </td></tr>
+      {% if sync.error %}<tr><th>Último error</th><td class="muted">{{ sync.error }}</td></tr>{% endif %}
+      <tr><th>Resultados pendientes</th><td>{{ sync.pending }}</td></tr>
+    </tbody>
+  </table>
+</section>
+<section class="card">
   <div class="toolbar"><h2>Tareas programadas</h2></div>
   {% if jobs %}
   <table>
@@ -713,6 +735,10 @@ def create_app(config_path: str | None = None) -> Flask:
     app = Flask(__name__)
     app.config["WORKER_DB"] = str(db_path)
     app.config["WORKER_NAME"] = worker_name
+    app.config["PANEL_URL"] = str(cfg.get("hosting", {}).get("base_url", ""))
+    app.config["PANEL_CONFIGURED"] = bool(
+        cfg.get("hosting", {}).get("base_url") and cfg.get("hosting", {}).get("api_token")
+    )
     # La GUI va por HTTP en la red local: Secure no aplica, pero SameSite sí.
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     vfile = Path(__file__).resolve().parent.parent / "VERSION"
@@ -897,6 +923,13 @@ def create_app(config_path: str | None = None) -> Flask:
                 "SELECT * FROM job_runs ORDER BY started_at DESC LIMIT 25"
             ).fetchall()
             revision = store.get_meta(conn, "revision")
+            sync_state = {
+                "at": store.get_meta(conn, "last_sync_at") or "",
+                "ok": store.get_meta(conn, "last_sync_ok") == "1",
+                "error": store.get_meta(conn, "last_sync_error") or "",
+                "pending": store.count_pending(conn),
+                "revision": store.revision(conn),
+            }
         finally:
             conn.close()
 
@@ -915,6 +948,8 @@ def create_app(config_path: str | None = None) -> Flask:
             runs=runs,
             next_runs=next_runs,
             job_names={j["id"]: j["name"] for j in jobs},
+            sync=sync_state,
+            panel_url=app.config["PANEL_URL"],
         )
         return page("Dashboard", content)
 

@@ -59,7 +59,9 @@ final class Database
      */
     private static function ensureSchema(PDO $pdo): void
     {
-        if (self::tableExists($pdo, 'jobs') && self::tableExists($pdo, 'meta')) {
+        if (self::tableExists($pdo, 'jobs')
+            && self::tableExists($pdo, 'meta')
+            && self::tableExists($pdo, 'login_attempts')) {
             return;
         }
 

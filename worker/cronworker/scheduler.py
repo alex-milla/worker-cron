@@ -73,12 +73,14 @@ class Scheduler:
 
             sync.heartbeat(self.conn, self.client, self.worker_name)
             self._backoff = self.poll_interval
+            store.set_last_sync(self.conn, True)
         except sync.SyncError as exc:
             resumen["error"] = str(exc)
             log.warning(
                 "sincronización fallida: %s (reintento en %s min)", exc, self._backoff
             )
             self._backoff = min(self._backoff * 2, self.backoff_max)
+            store.set_last_sync(self.conn, False, str(exc))
 
         self._next_poll = datetime.now() + timedelta(minutes=self._backoff)
         return resumen

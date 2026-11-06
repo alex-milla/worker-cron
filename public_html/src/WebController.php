@@ -122,12 +122,22 @@ final class WebController
             $username = trim((string)($_POST['username'] ?? ''));
             $password = (string)($_POST['password'] ?? '');
 
-            if ($username === '' || $password === '') {
+            $ip = LoginThrottle::clientIp();
+            $throttle = new LoginThrottle();
+
+            $espera = $throttle->blockedFor($ip, $username);
+            if ($espera > 0) {
+                http_response_code(429);
+                $error = 'Demasiados intentos fallidos. Espera ' . $espera
+                    . ' segundos antes de volver a probar.';
+            } elseif ($username === '' || $password === '') {
                 $error = 'Todos los campos son obligatorios.';
             } elseif (Auth::login($username, $password)) {
+                $throttle->clear($ip);
                 $this->flash('ok', 'Sesión iniciada.');
                 $this->redirect('/');
             } else {
+                $throttle->recordFailure($ip, $username);
                 $error = 'Credenciales inválidas.';
             }
         }

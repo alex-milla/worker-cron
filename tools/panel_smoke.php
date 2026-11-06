@@ -394,6 +394,52 @@ try {
     } else {
         echo "SKIP  zip: no se pudo crear el fixture en este PHP\n";
     }
+
+    // ------------------------------------------ 12. rate limiting del login --
+    $throttle = new \CronPanel\LoginThrottle($pdo);
+    $ipA = '203.0.113.7';
+
+    check('sin intentos no bloquea', $throttle->blockedFor($ipA, 'admin') === 0);
+
+    for ($i = 0; $i < 4; $i++) {
+        $throttle->recordFailure($ipA, 'admin');
+    }
+    check('4 fallos aún no bloquea', $throttle->blockedFor($ipA, 'admin') === 0);
+
+    $throttle->recordFailure($ipA, 'admin');
+    $espera = $throttle->blockedFor($ipA, 'admin');
+    check('5 fallos bloquea (IP + usuario)', $espera > 0 && $espera <= 900, (string)$espera);
+    check('otro usuario no queda bloqueado', $throttle->blockedFor($ipA, 'otro') === 0);
+    check('otra IP no queda bloqueada', $throttle->blockedFor('198.51.100.1', 'admin') === 0);
+
+    $throttle->clear($ipA);
+    check('clear desbloquea tras entrar bien', $throttle->blockedFor($ipA, 'admin') === 0);
+
+    for ($i = 0; $i < 20; $i++) {
+        $throttle->recordFailure('198.51.100.9', 'u' . $i);
+    }
+    check('20 fallos desde una IP bloquean', $throttle->blockedFor('198.51.100.9', 'nuevo') > 0);
+
+    $pdo->exec('DELETE FROM login_attempts');
+    $pdo->exec(
+        "INSERT INTO login_attempts (ip, username, created_at)"
+        . " VALUES ('203.0.113.9', 'admin', datetime('now', '-20 minutes'))"
+    );
+    for ($i = 0; $i < 4; $i++) {
+        $throttle->recordFailure('203.0.113.9', 'admin');
+    }
+    check('los intentos caducados no cuentan', $throttle->blockedFor('203.0.113.9', 'admin') === 0);
+
+    $pdo->exec('DELETE FROM login_attempts');
+    $pdo->exec(
+        "INSERT INTO login_attempts (ip, username, created_at)"
+        . " VALUES ('203.0.113.10', 'admin', datetime('now', '-2 hours'))"
+    );
+    $throttle->blockedFor('203.0.113.10', 'admin');
+    check(
+        'purga los intentos de más de 1 hora',
+        (int)$pdo->query('SELECT COUNT(*) FROM login_attempts')->fetchColumn() === 0
+    );
 } catch (Throwable $e) {
     $fallos++;
     echo 'EXCEPCIÓN: ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ")\n";

@@ -49,6 +49,9 @@ cada 5 s:     ejecutar las tareas cuya hora cron ha llegado
 - Las ejecuciones se guardan primero en local y se reportan después. Si el
   panel no responde, quedan pendientes y se reintentan con backoff exponencial
   (hasta `hosting.backoff_max_min`).
+- El dashboard muestra una tarjeta **«Estado del worker»** con el panel, la
+  revisión, la última sincronización (y su error, si lo hubo) y los resultados
+  pendientes de enviar.
 - Cron clásico: lo que se pierde con el worker apagado **no se recupera**, y
   las tareas se ejecutan **de una en una** (sin solaparse).
 
@@ -85,9 +88,13 @@ abre la conexión (`src/Database.php`), así que ya no hay que cargar
 bloqueados desde el `.htaccess` raíz.
 
 El panel ya es funcional: **login con sesión + CSRF**, dashboard, alta/edición
-de tareas, activar/pausar/borrar y **«Perfil y contraseña»** (cambiar usuario y
-contraseña sin tocar ficheros). La API del worker (`/api/v1/*`) sigue en 501
-hasta la fase 4, así que **el worker todavía no sincroniza nada**.
+de tareas, activar/pausar/borrar, **«Perfil y contraseña»** (cambiar usuario y
+contraseña sin tocar ficheros), **API v1** para el worker y
+**auto-actualización** desde GitHub con backups.
+
+> El login está **limitado**: 5 fallos por usuario y 15 minutos (y 20 por IP)
+> bloquean temporalmente con `429`. Se guardan en `login_attempts` y la IP se
+> toma de `REMOTE_ADDR` (no de `X-Forwarded-For`, que sería falsificable).
 
 > La contraseña se **siembra desde `config.php`** la primera vez (tabla
 > `users`) y a partir de ahí se cambia desde «Perfil y contraseña». Al

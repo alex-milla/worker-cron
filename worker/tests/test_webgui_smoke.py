@@ -256,4 +256,11 @@ css = _re.search(r"<style>(.*?)</style>", dash, _re.S).group(1)
 assert "&#39;" not in css and "Segoe UI" in css, "el CSS se esta escapando dentro de <style>"
 print("25. CSS sin escapar: OK")
 
+# 26. tarjeta de estado de sincronización en el dashboard
+dash = c5.get("/").data.decode("utf-8")
+assert "Estado del worker" in dash, "falta la tarjeta de estado"
+assert "Resultados pendientes" in dash
+assert "todavía no se ha sincronizado" in dash, "una BD nueva no debería tener sync"
+print("26. tarjeta de estado del worker: OK")
+
 print("\nTODOS LOS TESTS OK")

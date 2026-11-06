@@ -9,6 +9,7 @@ pending_sync=1 para empujarse al hosting cuando la API esté disponible.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -357,6 +358,14 @@ def revision(conn: sqlite3.Connection) -> int:
         return int(raw or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def set_last_sync(conn: sqlite3.Connection, ok: bool, error: str = "") -> None:
+    """Registra el resultado de la última sincronización con el panel."""
+    set_meta(conn, "last_sync_at", datetime.now().isoformat(timespec="seconds"))
+    set_meta(conn, "last_sync_ok", "1" if ok else "0")
+    set_meta(conn, "last_sync_error", (error or "")[:500])
+    conn.commit()
 
 
 # ------------------------------------------------------------------- meta --

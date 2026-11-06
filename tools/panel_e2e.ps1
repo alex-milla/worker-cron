@@ -311,6 +311,28 @@ try {
     $r = Invoke-WebRequest -Uri "$base/login" -Method Post -WebSession $s4 `
         -Body @{ username = 'admin'; password = 'test1234'; csrf = $csrf4 }
     Check 'las credenciales viejas ya no valen' ($r.Content -match 'Credenciales inválidas')
+
+    # 17. rate limiting del login (usuario distinto -> no bloquea al admin)
+    $s5 = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $r = Invoke-WebRequest -Uri "$base/login" -WebSession $s5
+    $csrf5 = Get-Csrf $r.Content
+    for ($i = 0; $i -lt 5; $i++) {
+        $r = Invoke-WebRequest -Uri "$base/login" -Method Post -WebSession $s5 `
+            -Body @{ username = 'intruso'; password = 'mala'; csrf = $csrf5 }
+    }
+    Check '5 fallos muestran error' ($r.Content -match 'Credenciales inválidas')
+
+    $r = Invoke-WebRequest -Uri "$base/login" -Method Post -WebSession $s5 -SkipHttpErrorCheck `
+        -Body @{ username = 'intruso'; password = 'mala'; csrf = $csrf5 }
+    Check 'el 6º intento = 429' ($r.StatusCode -eq 429) "status=$($r.StatusCode)"
+    Check 'avisa de demasiados intentos' ($r.Content -match 'Demasiados intentos')
+
+    $s6 = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $r = Invoke-WebRequest -Uri "$base/login" -WebSession $s6
+    $csrf6 = Get-Csrf $r.Content
+    $r = Invoke-WebRequest -Uri "$base/login" -Method Post -WebSession $s6 -MaximumRedirection 5 `
+        -Body @{ username = 'gestor'; password = 'nueva-clave-9'; csrf = $csrf6 }
+    Check 'el admin entra aunque otro usuario esté bloqueado' ($r.Content -match 'Tareas programadas')
 } catch {
     $fallos++
     Write-Output "EXCEPCIÓN: $($_.Exception.Message)"

@@ -1,12 +1,12 @@
 [Unit]
-Description=Cron Scheduler Worker
+Description=Cron Scheduler Worker (daemon)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/cron-worker
-ExecStart=/opt/cron-worker/venv/bin/python -m cronworker.scheduler
+WorkingDirectory=/opt/worker-cron/worker
+ExecStart=/opt/worker-cron/worker/venv/bin/python -m cronworker.scheduler
 Restart=always
 RestartSec=10
 User=cronworker

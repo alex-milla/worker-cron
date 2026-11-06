@@ -57,6 +57,20 @@ def cron_check(cron_expr: str) -> tuple[bool, str]:
         return False, f"expresión cron inválida: {exc}"
 
 
+def safe_next(target: str | None) -> str:
+    """Solo rutas internas: evita open redirect en ?next=.
+
+    Rechaza URLs absolutas (``https://…``), protocolo-relativas (``//host``)
+    y el truco de barra invertida (``/\\host``), que algunos navegadores
+    normalizan a ``//host``.
+    """
+    if not target or not target.startswith("/"):
+        return "/"
+    if target.startswith("//") or target.startswith("/\\"):
+        return "/"
+    return target
+
+
 # ------------------------------------------------------------------ styles --
 
 BASE_CSS = """
@@ -386,6 +400,15 @@ SHELL = """<!DOCTYPE html>
 
     <main>
       <div class="page-container">
+        {% with msgs = get_flashed_messages(with_categories=true) %}
+          {% for category, message in msgs %}
+            <div class="alert-{{ 'ok' if category == 'ok' else 'err' }}">{{ message }}</div>
+          {% endfor %}
+        {% endwith %}
+        {% if default_password %}
+          <div class="warn-banner">Estás usando la contraseña por defecto
+            (<code>admin/admin</code>). <a href="{{ url_for('password_page') }}">Cámbiala ahora</a>.</div>
+        {% endif %}
         {{ content|safe }}
       </div>
     </main>
@@ -429,6 +452,14 @@ SHELL = """<!DOCTYPE html>
     document.addEventListener('click', function(e){ if (!um.contains(e.target)) um.classList.remove('open'); });
     document.addEventListener('keydown', function(e){ if (e.key === 'Escape') um.classList.remove('open'); });
   }
+
+  /* confirmaciones: el texto va en data-confirm (HTML-escapado por Jinja)
+     y NUNCA se interpola dentro de un literal JS. */
+  document.querySelectorAll('form[data-confirm]').forEach(function(f){
+    f.addEventListener('submit', function(e){
+      if (!window.confirm(f.getAttribute('data-confirm'))) e.preventDefault();
+    });
+  });
 })();
 </script>
 </body>
@@ -472,7 +503,7 @@ DASHBOARD_CONTENT = """{% macro pill(status) %}
           </form>
           <form method="post" style="display:inline"
                 action="{{ url_for('job_delete', job_id=job['id']) }}"
-                onsubmit="return confirm('¿Eliminar «{{ job['name'] }}» y todas sus ejecuciones?');">
+                data-confirm="¿Eliminar «{{ job['name'] }}» y todas sus ejecuciones?">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <button type="submit" class="danger">Borrar</button>
           </form>
@@ -564,7 +595,7 @@ UPDATES_CONTENT = """<section class="card">
       <div class="alert-ok">Actualizado a <strong>v{{ result.remote }}</strong>
         (copiados: {{ result.copied }} · borrados: {{ result.deleted }} ·
          sin cambios: {{ result.skipped }} · errores: {{ result.errors }})
-        {% if result.error_detail %}<br><small>{{ result.error_detail|join('<br>') }}</small>{% endif %}
+        {% if result.error_detail %}<br><small>{% for detail in result.error_detail %}{{ detail }}{% if not loop.last %}<br>{% endif %}{% endfor %}</small>{% endif %}
         <br>Reinicia el worker para aplicar los cambios:
         <code>systemctl restart cron-worker cron-gui</code></div>
     {% else %}
@@ -586,7 +617,7 @@ UPDATES_CONTENT = """<section class="card">
   {% endif %}
   <div class="form-actions">
     <form method="post" action="{{ url_for('updates_page') }}"
-          onsubmit="return confirm('¿Instalar v{{ remote }}? Se hará backup antes.');">
+          data-confirm="¿Instalar v{{ remote }}? Se hará backup antes.">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="action" value="install">
       <button type="submit" class="btn" {% if not remote %}disabled{% endif %}>Instalar última versión</button>
@@ -630,7 +661,7 @@ UPDATES_CONTENT = """<section class="card">
         <td class="mono">{{ b.name }}</td>
         <td>
           <form method="post" action="{{ url_for('updates_page') }}" style="display:inline"
-                onsubmit="return confirm('¿Restaurar {{ b.name }}? Se hará backup previo del estado actual.');">
+                data-confirm="¿Restaurar {{ b.name }}? Se hará backup previo del estado actual.">
             <input type="hidden" name="csrf" value="{{ csrf }}">
             <input type="hidden" name="action" value="restore">
             <input type="hidden" name="backup" value="{{ b.name }}">
@@ -682,6 +713,8 @@ def create_app(config_path: str | None = None) -> Flask:
     app = Flask(__name__)
     app.config["WORKER_DB"] = str(db_path)
     app.config["WORKER_NAME"] = worker_name
+    # La GUI va por HTTP en la red local: Secure no aplica, pero SameSite sí.
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
     vfile = Path(__file__).resolve().parent.parent / "VERSION"
     app.config["APP_VERSION"] = vfile.read_text(encoding="utf-8").strip() if vfile.is_file() else "0.0.0"
 
@@ -743,7 +776,7 @@ def create_app(config_path: str | None = None) -> Flask:
             default_password=default_pw,
             csrf=session["csrf"],
             content=content,
-            app_css=APP_CSS.replace("\n", " "),
+            app_css=Markup(APP_CSS.replace("\n", " ")),
         )
 
     # ---- guard de sesión (login y /health públicos) ----
@@ -779,13 +812,13 @@ def create_app(config_path: str | None = None) -> Flask:
                 if uid is not None:
                     session["uid"] = uid
                     session["username"] = username
-                    return redirect(request.args.get("next") or url_for("dashboard"))
+                    return redirect(safe_next(request.args.get("next")))
                 error = "Credenciales inválidas"
         return render_template_string(
             LOGIN_PAGE,
             app_name=APP_NAME,
             app_subtitle=APP_SUBTITLE,
-            login_css=LOGIN_CSS.replace("\n", " "),
+            login_css=Markup(LOGIN_CSS.replace("\n", " ")),
             error=error,
             username=username,
             csrf=session["csrf"],
@@ -966,26 +999,33 @@ def create_app(config_path: str | None = None) -> Flask:
         conn = db()
         try:
             job = store.get_job(conn, job_id)
-            out_of_db = None
-            if request.method == "POST":
-                if not check_csrf():
-                    abort(400)
-                data, _, error = validate_form()
-                if data is not None:
-                    data["id"] = job_id
-                    data["source"] = job["source"] if job else "local"
-                    store.save_job(conn, data)
-                    out_of_db = True
         finally:
             conn.close()
-        if out_of_db:
-            flash(f"Tarea #{job_id} actualizada", "ok")
-            return redirect(url_for("dashboard"))
-        if error:
-            return job_form(job, error=error,
-                            values={**request.form, "enabled": bool(request.form.get("enabled"))})
         if job is None:
             abort(404)
+
+        if request.method == "POST":
+            if not check_csrf():
+                abort(400)
+            data, _, error = validate_form()
+            if data is None:
+                return job_form(
+                    job, error=error,
+                    values={**request.form,
+                            "enabled": bool(request.form.get("enabled"))},
+                )
+            data["id"] = job_id
+            data["source"] = job["source"]
+            conn = db()
+            try:
+                saved = store.save_job(conn, data)
+            finally:
+                conn.close()
+            if saved is None:
+                abort(404)
+            flash(f"Tarea #{job_id} actualizada", "ok")
+            return redirect(url_for("dashboard"))
+
         return job_form(job)
 
     @app.route("/jobs/<int:job_id>/toggle", methods=["POST"])
@@ -1064,7 +1104,7 @@ def create_app(config_path: str | None = None) -> Flask:
                 error = str(exc)
             if result and result.get("updated"):
                 current = result["remote"]
-                remote = None
+                remote = result["remote"]
 
         else:
             conn = db()
@@ -1107,10 +1147,12 @@ def create_app(config_path: str | None = None) -> Flask:
 
     @app.get("/api/jobs")
     def api_jobs():
+        # Endpoint público de monitorización: se omite `command` a propósito
+        # (suele llevar credenciales: mysql -p..., tokens, rutas internas).
         conn = db()
         try:
             rows = conn.execute(
-                "SELECT id, name, cron_expr, command, timeout_sec, enabled,"
+                "SELECT id, name, cron_expr, timeout_sec, enabled,"
                 " source, pending_sync, synced_at FROM jobs ORDER BY id"
             ).fetchall()
         finally:

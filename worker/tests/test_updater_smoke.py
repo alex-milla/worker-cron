@@ -150,4 +150,32 @@ assert (app2 / "config.yaml").read_text() == "worker:\n  name: PROD\n"  # intact
 assert len(updater.list_backups(app2)) >= 1
 print("12. update() end-to-end (release simulada): OK")
 
+# 13. backup de una instalacion SIN manifiesto no queda vacio (1a actualizacion)
+fresh = tmp / "fresh"
+(fresh / "cronworker").mkdir(parents=True)
+(fresh / "cronworker" / "__init__.py").write_text("v0\n")
+(fresh / "VERSION").write_text("0.0.1\n")
+b = updater.create_backup(fresh)
+assert len([p for p in b.rglob("*") if p.is_file()]) >= 3, "backup inicial vacio"
+print("13. primer backup no vacio: OK")
+
+# 14. restore elimina los ficheros que introdujo la version posterior
+src2 = tmp / "src2" / "worker"
+(src2 / "cronworker").mkdir(parents=True)
+(src2 / "cronworker" / "__init__.py").write_text("v1\n")
+(src2 / "VERSION").write_text("1.0\n")
+updater.sync_from_source(src2, fresh, "1.0")
+b1 = updater.create_backup(fresh)
+(src2 / "cronworker" / "nuevo.py").write_text("nuevo\n")
+(src2 / "VERSION").write_text("1.1\n")
+updater.sync_from_source(src2, fresh, "1.1")
+assert (fresh / "cronworker" / "nuevo.py").exists()
+updater.restore_backup(b1.name, fresh)
+assert not (fresh / "cronworker" / "nuevo.py").exists(), "restore dejo ficheros nuevos"
+print("14. restore elimina ficheros nuevos: OK")
+
+# 15. VERSION se respalda y se restaura (ya no es "sensible")
+assert (fresh / "VERSION").read_text().strip() == "1.0"
+print("15. VERSION restaurada: OK")
+
 print("\nTODOS LOS TESTS DEL UPDATER OK")

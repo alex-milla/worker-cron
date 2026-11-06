@@ -3,7 +3,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.path.insert(0, r"J:\worker-cron\worker")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 tmp = Path(tempfile.mkdtemp()) / "worker.sqlite"
 cfg = tmp.parent / "config.yaml"
@@ -175,5 +175,85 @@ r = c5.post("/updates", data={"action": "save_token", "github_token": "", "csrf"
 page_html = c5.get("/updates").data.decode("utf-8")
 assert "ya configurado" not in page_html and "Sin token" in page_html
 print("17b. token eliminado: OK")
+
+# 18. GET /jobs/<id>/edit responde 200 (regresion del 500 UnboundLocalError:
+#     la suite solo hacia POST y no veia la pantalla de edicion)
+r = c5.post("/jobs/new", data={"name": "Editable", "cron_expr": "0 5 * * *",
+                               "command": "echo ok", "timeout_sec": "30",
+                               "enabled": "on", "csrf": tok})
+assert r.status_code == 302
+conn = sqlite3.connect(tmp)
+jid = conn.execute("SELECT id FROM jobs ORDER BY id DESC LIMIT 1").fetchone()[0]
+conn.close()
+r = c5.get(f"/jobs/{jid}/edit")
+assert r.status_code == 200, r.status_code
+assert b"Editar t" in r.data and b"Editable" in r.data
+print("18. GET /jobs/<id>/edit -> 200: OK")
+
+# 19. id inexistente -> 404, no 500 ni "actualizada"
+assert c5.get("/jobs/999999/edit").status_code == 404
+r = c5.post("/jobs/999999/edit", data={"name": "X", "cron_expr": "* * * * *",
+                                       "command": "x", "timeout_sec": "1",
+                                       "enabled": "on", "csrf": tok})
+assert r.status_code == 404, r.status_code
+conn = sqlite3.connect(tmp)
+assert conn.execute("SELECT COUNT(*) FROM jobs WHERE id=999999").fetchone()[0] == 0
+conn.close()
+print("19. id inexistente -> 404: OK")
+
+# 20. open redirect en ?next= (absoluta y protocolo-relativa)
+for hostile in ("https://evil.example.com", "//evil.example.com", "/\\evil.example.com"):
+    c6 = app.test_client()
+    c6.get("/login")
+    with c6.session_transaction() as s:
+        cs6 = s["csrf"]
+    r = c6.post(f"/login?next={hostile}",
+                data={"username": "gestor", "password": "nueva-clave-1", "csrf": cs6})
+    loc = r.headers.get("Location") or ""
+    assert r.status_code == 302 and loc == "/", (hostile, loc)
+print("20. ?next= solo rutas internas: OK")
+
+# 21. el nombre del job no se interpola en JS (XSS almacenado del confirm)
+payload = "x')||alert(document.domain)||confirm('"
+c5.post("/jobs/new", data={"name": payload, "cron_expr": "* * * * *",
+                           "command": "echo", "timeout_sec": "1",
+                           "enabled": "on", "csrf": tok})
+dash = c5.get("/").data.decode("utf-8")
+assert "onsubmit=" not in dash, "el confirm vuelve a interpolar datos en JS"
+assert "data-confirm=" in dash and "addEventListener('submit'" in dash
+print("21. nombre sin interpolar en JS (data-confirm): OK")
+
+# 22. flash() se renderiza de verdad
+r = c5.post("/jobs/new", data={"name": "ConAviso", "cron_expr": "* * * * *",
+                               "command": "echo", "timeout_sec": "1",
+                               "enabled": "on", "csrf": tok},
+            follow_redirects=True)
+assert b"ConAviso" in r.data and "creada".encode() in r.data, r.data[:300]
+print("22. flash 'Tarea creada' visible: OK")
+
+# 23. aviso de contrasena por defecto (BD nueva -> admin/admin)
+tmp2 = Path(tempfile.mkdtemp()) / "fresh.sqlite"
+cfg2 = tmp2.parent / "config.yaml"
+cfg2.write_text('worker:\n  name: fresh\n  db_path: "%s"\n' % tmp2.as_posix(),
+                encoding="utf-8")
+app2 = create_app(cfg2)
+f = app2.test_client()
+f.get("/login")
+with f.session_transaction() as s:
+    cs7 = s["csrf"]
+f.post("/login", data={"username": "admin", "password": "admin", "csrf": cs7})
+assert "contraseña por defecto".encode() in f.get("/").data
+print("23. aviso de contrasena por defecto: OK")
+
+# 24. /api/jobs publico NO expone el comando
+body = app.test_client().get("/api/jobs").get_data(as_text=True)
+assert '"command"' not in body and "echo" not in body, body[:200]
+print("24. /api/jobs sin comandos: OK")
+
+# 25. el CSS no se autoescapa dentro de <style>
+dash = c5.get("/").data.decode("utf-8")
+css = _re.search(r"<style>(.*?)</style>", dash, _re.S).group(1)
+assert "&#39;" not in css and "Segoe UI" in css, "el CSS se esta escapando dentro de <style>"
+print("25. CSS sin escapar: OK")
 
 print("\nTODOS LOS TESTS OK")

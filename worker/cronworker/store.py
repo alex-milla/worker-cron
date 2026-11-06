@@ -53,11 +53,17 @@ CREATE TABLE IF NOT EXISTS meta (
 
 
 def connect(db_path: Path | str) -> sqlite3.Connection:
-    """Open (and initialise/migrate) the local SQLite mirror."""
+    """Open (and initialise/migrate) the local SQLite mirror.
+
+    WAL + busy_timeout: la GUI corre con varios workers de gunicorn y todos
+    abren su propia conexión; sin esto un lector bloquea a un escritor.
+    """
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), timeout=10)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=10000")
     conn.executescript(SCHEMA)
     _migrate(conn)
     return conn
@@ -172,10 +178,11 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
     return conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
 
 
-def save_job(conn: sqlite3.Connection, data: dict) -> int:
-    """Inserta o actualiza un job. Devuelve su id."""
+def save_job(conn: sqlite3.Connection, data: dict) -> int | None:
+    """Inserta o actualiza un job. Devuelve su id, o None si el UPDATE no
+    encontró la fila (id inexistente)."""
     if data.get("id"):
-        conn.execute(
+        cur = conn.execute(
             "UPDATE jobs SET name=?, cron_expr=?, command=?, timeout_sec=?,"
             " enabled=?, comment=?, source=?, pending_sync=1,"
             " synced_at=datetime('now')"
@@ -186,6 +193,9 @@ def save_job(conn: sqlite3.Connection, data: dict) -> int:
                 data["source"], data["id"],
             ),
         )
+        if cur.rowcount == 0:
+            conn.rollback()
+            return None
         job_id = int(data["id"])
     else:
         cur = conn.execute(

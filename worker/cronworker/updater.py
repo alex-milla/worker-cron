@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -30,7 +31,7 @@ REPO_NAME = "worker-cron"
 API_BASE = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}"
 
 # Estado del usuario: nunca se copia ni se borra en las actualizaciones
-SENSITIVE_FILES = {"config.yaml", "VERSION"}
+SENSITIVE_FILES = {"config.yaml"}
 SENSITIVE_PREFIXES = ("data/", "logs/", "venv/", "__pycache__/")
 SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "data", "logs", "tools"}
 
@@ -172,7 +173,11 @@ def sync_from_source(src: Path, app_root: Path, version: str) -> dict:
                 skipped += 1
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src / rel, dst)
+            # escritura atómica: nunca se deja un .py a medio escribir si el
+            # proceso muere a mitad (p. ej. timeout de gunicorn).
+            tmp_dst = dst.with_name(dst.name + ".tmp-upd")
+            shutil.copy2(src / rel, tmp_dst)
+            os.replace(tmp_dst, dst)
             copied += 1
         except OSError as exc:
             errors += 1
@@ -229,6 +234,10 @@ def create_backup(app_root: Path) -> Path:
     dest.mkdir(parents=True, exist_ok=False)
 
     manifest = load_manifest(app_root / MANIFEST_PATH)
+    if not manifest:
+        # Instalación sin manifiesto todavía (primera actualización tras un
+        # git clone): sin esto el "backup previo" quedaría vacío e inservible.
+        manifest = build_manifest(app_root)
     for rel in manifest:
         src = app_root / rel
         if not src.is_file():
@@ -236,10 +245,9 @@ def create_backup(app_root: Path) -> Path:
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, target)
-    # el manifiesto actual viaja con el backup para poder restaurar el estado exacto
-    if (app_root / MANIFEST_PATH).is_file():
-        (dest / MANIFEST_PATH).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(app_root / MANIFEST_PATH, dest / MANIFEST_PATH)
+    # el backup lleva SIEMPRE su manifiesto (aunque el original no existiera),
+    # para que restore_backup sepa exactamente qué ficheros gestionaba.
+    save_manifest(dest / MANIFEST_PATH, installed_version(app_root), manifest)
     return dest
 
 
@@ -259,9 +267,13 @@ def restore_backup(backup_name: str, app_root: Path) -> dict:
     if not backup_dir.is_dir():
         raise ValueError("Backup no encontrado")
 
+    backup_files = load_manifest(backup_dir / MANIFEST_PATH)
+    if not backup_files:
+        raise ValueError("El backup no contiene manifiesto: no se puede restaurar")
+
     pre = create_backup(app_root)
-    copied = 0
-    for rel in load_manifest(backup_dir / MANIFEST_PATH):
+    copied = removed = 0
+    for rel in backup_files:
         src = backup_dir / rel
         if not src.is_file():
             continue
@@ -269,9 +281,21 @@ def restore_backup(backup_name: str, app_root: Path) -> dict:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
         copied += 1
-    if (backup_dir / MANIFEST_PATH).is_file():
-        shutil.copy2(backup_dir / MANIFEST_PATH, app_root / MANIFEST_PATH)
-    return {"restored": copied, "pre_backup": pre.name}
+    # rollback completo: los ficheros gestionados que introdujo la versión
+    # posterior y que no existen en el backup también se eliminan.
+    current_files = load_manifest(app_root / MANIFEST_PATH)
+    for rel in current_files:
+        if rel in backup_files or is_sensitive(rel):
+            continue
+        stale = app_root / rel
+        try:
+            if stale.is_file():
+                stale.unlink()
+                removed += 1
+        except OSError:
+            pass
+    save_manifest(app_root / MANIFEST_PATH, installed_version(app_root), backup_files)
+    return {"restored": copied, "removed": removed, "pre_backup": pre.name}
 
 
 # ------------------------------------------------------------------- ZIP --
@@ -340,7 +364,8 @@ def update(app_root: Path, token: str | None = None, force: bool = False) -> dic
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-    (app_root / "VERSION").write_text(remote + "\n", encoding="utf-8")
+    if not result["errors"]:
+        (app_root / "VERSION").write_text(remote + "\n", encoding="utf-8")
     return {
         "updated": True, "current": current, "remote": remote,
         "backup": backup.name, **result,

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     enabled INTEGER NOT NULL DEFAULT 1,
     comment TEXT,
     source TEXT NOT NULL DEFAULT 'local',
+    source_id INTEGER,
     pending_sync INTEGER NOT NULL DEFAULT 0,
     synced_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -34,7 +35,8 @@ CREATE TABLE IF NOT EXISTS job_runs (
     finished_at TEXT,
     status TEXT NOT NULL CHECK (status IN ('ok', 'failed', 'timeout')),
     exit_code INTEGER,
-    output TEXT
+    output TEXT,
+    reported INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS users (
@@ -76,12 +78,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE jobs ADD COLUMN source TEXT NOT NULL DEFAULT 'local'"
         )
+    if "source_id" not in cols:
+        conn.execute("ALTER TABLE jobs ADD COLUMN source_id INTEGER")
     if "pending_sync" not in cols:
         conn.execute(
             "ALTER TABLE jobs ADD COLUMN pending_sync INTEGER NOT NULL DEFAULT 0"
         )
     if "comment" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN comment TEXT")
+
+    run_cols = {row[1] for row in conn.execute("PRAGMA table_info(job_runs)")}
+    if "reported" not in run_cols:
+        conn.execute(
+            "ALTER TABLE job_runs ADD COLUMN reported INTEGER NOT NULL DEFAULT 0"
+        )
     conn.commit()
 
 
@@ -180,11 +190,15 @@ def get_job(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
 
 def save_job(conn: sqlite3.Connection, data: dict) -> int | None:
     """Inserta o actualiza un job. Devuelve su id, o None si el UPDATE no
-    encontró la fila (id inexistente)."""
+    encontró la fila (id inexistente).
+
+    Los jobs de la GUI son locales (`source='local'`, sin `source_id`): el
+    hosting es la autoridad para los suyos, que llegan por `replace_hosting_jobs`.
+    """
     if data.get("id"):
         cur = conn.execute(
             "UPDATE jobs SET name=?, cron_expr=?, command=?, timeout_sec=?,"
-            " enabled=?, comment=?, source=?, pending_sync=1,"
+            " enabled=?, comment=?, source=?, pending_sync=0,"
             " synced_at=datetime('now')"
             " WHERE id=?",
             (
@@ -201,11 +215,11 @@ def save_job(conn: sqlite3.Connection, data: dict) -> int | None:
         cur = conn.execute(
             "INSERT INTO jobs (name, cron_expr, command, timeout_sec, enabled,"
             " comment, source, pending_sync, synced_at)"
-            " VALUES (?,?,?,?,?,?,?,?,datetime('now'))",
+            " VALUES (?,?,?,?,?,?,?,0,datetime('now'))",
             (
                 data["name"], data["cron_expr"], data["command"],
                 data["timeout_sec"], int(data["enabled"]), data["comment"],
-                data["source"], 1,
+                data["source"],
             ),
         )
         job_id = int(cur.lastrowid or 0)
@@ -221,10 +235,128 @@ def delete_job(conn: sqlite3.Connection, job_id: int) -> None:
 
 def set_enabled(conn: sqlite3.Connection, job_id: int, enabled: bool) -> None:
     conn.execute(
-        "UPDATE jobs SET enabled=?, pending_sync=1 WHERE id=?",
+        "UPDATE jobs SET enabled=?, pending_sync=0 WHERE id=?",
         (int(enabled), job_id),
     )
     conn.commit()
+
+
+# --------------------------------------------------- espejo del hosting --
+
+
+def replace_hosting_jobs(conn: sqlite3.Connection, jobs: list[dict]) -> dict:
+    """Sincroniza el espejo local con la lista del panel.
+
+    - Alta/actualización por `source_id` (el id del panel).
+    - Borra los jobs de origen hosting que ya no están en el panel.
+    - **No toca** los jobs locales (`source='local'`).
+
+    Devuelve el recuento de cambios.
+    """
+    added = updated = 0
+    vistos: set[int] = set()
+
+    for job in jobs:
+        source_id = int(job["id"])
+        vistos.add(source_id)
+        values = (
+            str(job["name"]), str(job["cron_expr"]), str(job["command"]),
+            int(job.get("timeout_sec") or 0), int(job.get("enabled", 1)),
+            job.get("comment"),
+        )
+
+        row = conn.execute(
+            "SELECT id FROM jobs WHERE source_id = ?", (source_id,)
+        ).fetchone()
+
+        if row is not None:
+            conn.execute(
+                "UPDATE jobs SET name=?, cron_expr=?, command=?, timeout_sec=?,"
+                " enabled=?, comment=?, source='hosting', pending_sync=0,"
+                " synced_at=datetime('now') WHERE id=?",
+                (*values, int(row["id"])),
+            )
+            updated += 1
+        else:
+            conn.execute(
+                "INSERT INTO jobs (name, cron_expr, command, timeout_sec,"
+                " enabled, comment, source, source_id, pending_sync, synced_at)"
+                " VALUES (?,?,?,?,?,?,'hosting',?,0,datetime('now'))",
+                (*values, source_id),
+            )
+            added += 1
+
+    if vistos:
+        placeholders = ",".join("?" * len(vistos))
+        cur = conn.execute(
+            f"DELETE FROM jobs WHERE source='hosting' AND (source_id IS NULL"
+            f" OR source_id NOT IN ({placeholders}))",
+            tuple(vistos),
+        )
+    else:
+        cur = conn.execute("DELETE FROM jobs WHERE source='hosting'")
+
+    conn.commit()
+
+    return {"added": added, "updated": updated, "deleted": int(cur.rowcount or 0)}
+
+
+# ------------------------------------------------------------- ejecuciones --
+
+
+def save_run(conn: sqlite3.Connection, job_id: int, run: dict) -> int:
+    """Registra una ejecución local (pendiente de reportar al panel)."""
+    cur = conn.execute(
+        "INSERT INTO job_runs (job_id, started_at, finished_at, status,"
+        " exit_code, output, reported) VALUES (?,?,?,?,?,?,0)",
+        (
+            job_id, run["started_at"], run["finished_at"], run["status"],
+            run.get("exit_code"), run.get("output", ""),
+        ),
+    )
+    conn.commit()
+    return int(cur.lastrowid or 0)
+
+
+def pending_results(conn: sqlite3.Connection, limit: int = 50) -> list[sqlite3.Row]:
+    """Ejecuciones sin reportar, con el `source_id` del panel.
+
+    Solo se reportan las de jobs que vienen del hosting (las locales no
+    existen en el panel).
+    """
+    return conn.execute(
+        "SELECT r.*, j.source_id AS source_id"
+        " FROM job_runs r JOIN jobs j ON j.id = r.job_id"
+        " WHERE r.reported = 0 AND j.source_id IS NOT NULL"
+        " ORDER BY r.id LIMIT ?",
+        (max(1, int(limit)),),
+    ).fetchall()
+
+
+def mark_reported(conn: sqlite3.Connection, run_id: int) -> None:
+    conn.execute("UPDATE job_runs SET reported = 1 WHERE id = ?", (run_id,))
+    conn.commit()
+
+
+def count_pending(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        "SELECT COUNT(*) FROM job_runs r JOIN jobs j ON j.id = r.job_id"
+        " WHERE r.reported = 0 AND j.source_id IS NOT NULL"
+    ).fetchone()
+
+    return int(row[0] if row else 0)
+
+
+def set_revision(conn: sqlite3.Connection, revision: int) -> None:
+    set_meta(conn, "revision", str(int(revision)))
+
+
+def revision(conn: sqlite3.Connection) -> int:
+    raw = get_meta(conn, "revision")
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 # ------------------------------------------------------------------- meta --

@@ -30,9 +30,27 @@ systemctl enable --now cron-gui cron-worker
 La GUI del worker (Apache :80 → gunicorn → Flask) pide sesión en `/login`.
 La primera vez se crea el usuario **admin / admin**; cámbiala en la
 pantalla «Contraseña» al entrar (mientras no la cambies verás un aviso en
-todas las pantallas). Desde la GUI se crean, editan, pausan y borran tareas
-con validación de la expresión cron (cualquier cambio local queda marcado
-`pending_sync` para empujarse al hosting cuando la API esté lista).
+todas las pantallas).
+
+**El worker sincroniza, ejecuta y reporta** (desde v0.1.9):
+
+```
+cada minuto:  GET /api/v1/version   (barato) ─┐
+              si cambió: GET /api/v1/jobs      │ pull
+              POST /api/v1/results (pendientes)│
+              POST /api/v1/heartbeat           ┘
+cada 5 s:     ejecutar las tareas cuya hora cron ha llegado
+```
+
+- Las tareas del **panel** son la autoridad: se replican en el espejo local
+  (`source='hosting'`) y las que se borran o pausan allí desaparecen aquí.
+- Las tareas creadas en la **GUI del worker** son **locales**: solo existen en
+  el LXC, se ejecutan igual y **no se envían** al panel.
+- Las ejecuciones se guardan primero en local y se reportan después. Si el
+  panel no responde, quedan pendientes y se reintentan con backoff exponencial
+  (hasta `hosting.backoff_max_min`).
+- Cron clásico: lo que se pierde con el worker apagado **no se recupera**, y
+  las tareas se ejecutan **de una en una** (sin solaparse).
 
 ### Actualizar el worker
 

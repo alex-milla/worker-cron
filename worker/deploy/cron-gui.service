@@ -8,7 +8,7 @@ Type=simple
 # El daemon del worker escucha en 127.0.0.1:8080 (solo localhost);
 # Apache (worker/deploy/apache-cron-gui.conf) hace de reverse proxy en el :80.
 WorkingDirectory=/opt/worker-cron/worker
-ExecStart=/opt/worker-cron/worker/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:8080 "cronworker.webgui:app"
+ExecStart=/opt/worker-cron/worker/venv/bin/gunicorn --workers 2 --no-control-socket --bind 127.0.0.1:8080 "cronworker.webgui:app"
 Restart=always
 RestartSec=10
 User=cronworker

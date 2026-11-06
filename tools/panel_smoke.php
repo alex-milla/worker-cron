@@ -283,6 +283,117 @@ try {
     $r5 = $upFallo->check(true);
     check('un error de red no rompe', $r5['release'] === null && $r5['error'] === 'sin conexión');
     check('el error tambien se cachea', $upFallo->check()['cached'] === true);
+
+    // ------------------------------------------------ 11. instalador (panel) --
+    $app = $tmpDir . '/app';
+    @mkdir($app . '/src', 0775, true);
+    @mkdir($app . '/config', 0775, true);
+    @mkdir($app . '/data', 0775, true);
+    file_put_contents($app . '/index.php', "<?php // v0\n");
+    file_put_contents($app . '/src/a.php', "<?php // a v1\n");
+    file_put_contents($app . '/config/config.php', "<?php return []; // DEL USUARIO\n");
+    file_put_contents($app . '/data/panel.sqlite', 'BD');
+    file_put_contents($app . '/VERSION', "0.9\n");
+
+    $inst = new \CronPanel\Installer($app);
+
+    $man = $inst->buildManifest();
+    check('manifiesto excluye config.php', !isset($man['config/config.php']));
+    check('manifiesto excluye data/', !isset($man['data/panel.sqlite']));
+    check('manifiesto incluye el resto', isset($man['index.php'], $man['src/a.php'], $man['VERSION']));
+
+    // release v1: instala también un fichero que luego desaparecerá
+    $rel1 = $tmpDir . '/rel1/public_html';
+    @mkdir($rel1 . '/src', 0775, true);
+    file_put_contents($rel1 . '/index.php', "<?php // v1\n");
+    file_put_contents($rel1 . '/src/a.php', "<?php // a v1\n");
+    file_put_contents($rel1 . '/MORIR.php', "<?php // obsoleto\n");
+    file_put_contents($rel1 . '/VERSION', "1.0\n");
+    $r1 = $inst->syncFrom($rel1, '1.0');
+    check('v1: copia 3 y salta el idéntico', $r1['copied'] === 3 && $r1['skipped'] === 1, json_encode($r1));
+    check('v1: MORIR.php queda gestionado', is_file($app . '/MORIR.php'));
+
+    // release v2: cambia index, añade b, quita MORIR
+    $rel = $tmpDir . '/release/public_html';
+    @mkdir($rel . '/src', 0775, true);
+    file_put_contents($rel . '/index.php', "<?php // v2\n");
+    file_put_contents($rel . '/src/a.php', "<?php // a v1\n");   // idéntico
+    file_put_contents($rel . '/src/b.php', "<?php // b nuevo\n");
+    file_put_contents($rel . '/VERSION', "2.0\n");
+
+    $sync = $inst->syncFrom($rel, '2.0');
+    check('sync: copia 3 (index, b, VERSION)', $sync['copied'] === 3, json_encode($sync));
+    check('sync: salta el idéntico (a)', $sync['skipped'] === 1, json_encode($sync));
+    check('sync: borra el obsoleto', $sync['deleted'] === 1 && !is_file($app . '/MORIR.php'), json_encode($sync));
+    check('sync: config.php intacto', str_contains((string)file_get_contents($app . '/config/config.php'), 'DEL USUARIO'));
+    check('sync: BD intacta', file_get_contents($app . '/data/panel.sqlite') === 'BD');
+    check('sync: VERSION actualizada', $inst->version() === '2.0');
+    check('sync: errores 0', $sync['errors'] === 0);
+
+    $backup = $inst->createBackup();
+    check('backup creado', is_dir($app . '/data/backups/' . $backup));
+    check('backup con manifiesto', is_file($app . '/data/backups/' . $backup . '/data/.manifest.json'));
+    check('backup con ficheros', is_file($app . '/data/backups/' . $backup . '/index.php'));
+    check('backup NO lleva config.php', !is_file($app . '/data/backups/' . $backup . '/config/config.php'));
+
+    // nueva versión que añade un fichero; luego rollback
+    file_put_contents($rel . '/index.php', "<?php // v3\n");
+    file_put_contents($rel . '/src/nuevo.php', "<?php // sobra\n");
+    $inst->syncFrom($rel, '3.0');
+    check('v3 añade el fichero nuevo', is_file($app . '/src/nuevo.php'));
+
+    $restore = $inst->restoreBackup($backup);
+    check('restore copia', $restore['restored'] >= 3, json_encode($restore));
+    check('restore elimina lo nuevo', !is_file($app . '/src/nuevo.php'));
+    check('restore recupera index', str_contains((string)file_get_contents($app . '/index.php'), 'v2'));
+    check('restore recupera VERSION', $inst->version() === '2.0');
+
+    $lanzado = false;
+    try {
+        $inst->restoreBackup('backup_9999');
+    } catch (\RuntimeException) {
+        $lanzado = true;
+    }
+    check('restore rechaza nombre inválido', $lanzado);
+
+    // zip-slip
+    check('safeEntry acepta rutas normales', \CronPanel\Installer::safeEntry('repo-sha/public_html/index.php'));
+    check('safeEntry rechaza ..', !\CronPanel\Installer::safeEntry('../evil.php'));
+    check('safeEntry rechaza .. en medio', !\CronPanel\Installer::safeEntry('a/../../b'));
+    check('safeEntry rechaza absolutas', !\CronPanel\Installer::safeEntry('/etc/passwd'));
+    check('safeEntry rechaza unidad Windows', !\CronPanel\Installer::safeEntry('C:/x.php'));
+
+    // extracción real (PharData o ZipArchive, lo que haya)
+    $zipPath = $tmpDir . '/rel.zip';
+    $creado = false;
+    try {
+        if (class_exists(\ZipArchive::class)) {
+            $z = new \ZipArchive();
+            $z->open($zipPath, \ZipArchive::CREATE);
+            $z->addFromString('repo-sha/public_html/index.php', "<?php // z\n");
+            $z->addFromString('repo-sha/public_html/VERSION', "9.9\n");
+            $z->addFromString('repo-sha/public_html/src/blob.bin', random_bytes(4096));
+            $z->close();
+            $creado = true;
+        } else {
+            $p = new \PharData($zipPath);
+            $p->addFromString('repo-sha/public_html/index.php', "<?php // z\n");
+            $p->addFromString('repo-sha/public_html/VERSION', "9.9\n");
+            $p->addFromString('repo-sha/public_html/src/blob.bin', random_bytes(4096));
+            unset($p);
+            $creado = filesize($zipPath) > 1024;
+        }
+    } catch (\Throwable $e) {
+        $creado = false;
+    }
+
+    if ($creado) {
+        $found = $inst->extractArchive($zipPath, $tmpDir . '/x');
+        check('zip: encuentra public_html', is_file($found . '/index.php') && is_dir($found . '/src'));
+        check('zip: extrae el contenido', str_contains((string)file_get_contents($found . '/index.php'), 'z'));
+    } else {
+        echo "SKIP  zip: no se pudo crear el fixture en este PHP\n";
+    }
 } catch (Throwable $e) {
     $fallos++;
     echo 'EXCEPCIÓN: ' . $e->getMessage() . ' (' . basename($e->getFile()) . ':' . $e->getLine() . ")\n";

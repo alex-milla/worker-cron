@@ -4,6 +4,8 @@ declare(strict_types=1);
 namespace CronPanel;
 
 use InvalidArgumentException;
+use RuntimeException;
+use Throwable;
 
 /**
  * Rutas y vistas del panel (hosting compartido).
@@ -27,17 +29,20 @@ final class WebController
     private RunRepository $runs;
     private UserRepository $users;
     private Updater $updater;
+    private Installer $installer;
 
     public function __construct(
         ?JobRepository $jobs = null,
         ?RunRepository $runs = null,
         ?UserRepository $users = null,
-        ?Updater $updater = null
+        ?Updater $updater = null,
+        ?Installer $installer = null
     ) {
         $this->jobs = $jobs ?? new JobRepository();
         $this->runs = $runs ?? new RunRepository();
         $this->users = $users ?? new UserRepository();
         $this->updater = $updater ?? new Updater();
+        $this->installer = $installer ?? new Installer();
     }
 
     public function handle(string $method, string $uri): void
@@ -82,7 +87,7 @@ final class WebController
             return;
         }
         if ($path === '/updates') {
-            $this->updatesPage();
+            $this->updatesPage($method);
             return;
         }
         if (preg_match('#^/jobs/(\d+)/edit$#', $path, $m) === 1) {
@@ -324,27 +329,146 @@ final class WebController
 
     // ---------------------------------------------------------- actualizaciones --
 
-    private function updatesPage(): void
+    private function updatesPage(string $method): void
     {
-        $forzar = isset($_GET['refresh']);
-        $check = $this->updater->check($forzar);
-        $instalada = $this->updater->installedVersion();
-        $release = $check['release'];
+        $error = null;
+        $result = null;
 
-        $alDia = $release !== null
-            && version_compare($instalada, (string)$release['version'], '>=');
+        if ($method === 'POST') {
+            $this->requireCsrf();
+            $accion = (string)($_POST['action'] ?? '');
+
+            try {
+                if ($accion === 'save_token') {
+                    $token = trim((string)($_POST['github_token'] ?? ''));
+                    if ($token !== '') {
+                        $this->updater->setToken($token);
+                        $this->flash('ok', 'Token de GitHub guardado.');
+                    } elseif ($this->updater->token() !== '') {
+                        $this->updater->clearToken();
+                        $this->flash('ok', 'Token de GitHub eliminado.');
+                    } else {
+                        $this->flash('ok', 'No había token que eliminar.');
+                    }
+                    $this->redirect('/updates');
+                }
+
+                if ($accion === 'restore') {
+                    $res = $this->installer->restoreBackup((string)($_POST['backup'] ?? ''));
+                    $this->flash(
+                        'ok',
+                        "Backup restaurado ({$res['restored']} ficheros, {$res['removed']} eliminados)."
+                    );
+                    $this->redirect('/updates');
+                }
+
+                if ($accion === 'install' || $accion === 'reinstall') {
+                    $result = $this->install($accion === 'reinstall');
+                } else {
+                    http_response_code(400);
+                    $error = 'Acción no válida.';
+                }
+            } catch (Throwable $e) {
+                $error = $e->getMessage();
+            }
+        }
+
+        try {
+            $check = $this->updater->check($method === 'POST');
+            $release = $check['release'];
+            if ($error === null && $check['error'] !== null) {
+                $error = $check['error'];
+            }
+        } catch (Throwable $e) {
+            $release = null;
+            if ($error === null) {
+                $error = $e->getMessage();
+            }
+        }
 
         $this->render('Actualizaciones', 'updates', [
             'active' => 'updates',
-            'instalada' => $instalada,
+            'instalada' => $this->installer->version(),
             'release' => $release,
-            'error' => $check['error'],
-            'cacheada' => $check['cached'],
-            'comprobada' => $check['checkedAt'],
-            'alDia' => $alDia,
+            'result' => $result,
+            'error' => $error,
+            'tokenSet' => $this->updater->token() !== '',
+            'backups' => $this->installer->listBackups(),
             'repo' => $this->updater->repo(),
             'csrf' => Auth::csrfToken(),
         ]);
+    }
+
+    /**
+     * Descarga la última release y la sincroniza sobre public_html/.
+     *
+     * @return array<string, mixed>
+     */
+    private function install(bool $force): array
+    {
+        $check = $this->updater->check(true);
+        if (($check['release'] ?? null) === null) {
+            throw new RuntimeException((string)($check['error'] ?? 'no hay releases publicadas'));
+        }
+
+        /** @var array<string, mixed> $release */
+        $release = $check['release'];
+        $actual = $this->installer->version();
+        $remota = (string)$release['version'];
+
+        if (!$force && version_compare($actual, $remota, '>=')) {
+            return [
+                'updated' => false, 'current' => $actual, 'remote' => $remota,
+                'message' => 'Ya estás en la última versión',
+            ];
+        }
+
+        $this->installer->checkWritable();
+        $backup = $this->installer->createBackup();
+
+        $tmp = $this->installer->appRoot() . '/data/tmp/' . bin2hex(random_bytes(4));
+        $this->ensureDir($tmp);
+
+        try {
+            $zip = $tmp . '/release.zip';
+            $this->updater->downloadRelease($release, $zip);
+            $src = $this->installer->extractArchive($zip, $tmp . '/extracted');
+            $resultado = $this->installer->syncFrom($src, $remota);
+        } finally {
+            $this->removeDir($tmp);
+        }
+
+        return [
+            'updated' => true, 'current' => $actual, 'remote' => $remota,
+            'backup' => $backup, ...$resultado,
+        ];
+    }
+
+    private function ensureDir(string $dir): void
+    {
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+            throw new RuntimeException("no se pudo crear el directorio {$dir}");
+        }
+    }
+
+    private function removeDir(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+        $items = scandir($dir) ?: [];
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $path = $dir . '/' . $item;
+            if (is_dir($path)) {
+                $this->removeDir($path);
+            } else {
+                @unlink($path);
+            }
+        }
+        @rmdir($dir);
     }
 
     // ------------------------------------------------------------ helpers --

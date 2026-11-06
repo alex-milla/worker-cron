@@ -46,6 +46,78 @@ final class Updater
         return $repo !== '' ? $repo : self::DEFAULT_REPO;
     }
 
+    // ------------------------------------------------------------- token --
+
+    private ?string $tokenCache = null;
+
+    /** Token de GitHub: BD (`meta.github_token`) y, si no hay, config.php. */
+    public function token(): string
+    {
+        if ($this->tokenCache !== null) {
+            return $this->tokenCache;
+        }
+
+        global $CRONPANEL_CONFIG;
+
+        $token = '';
+        try {
+            $stmt = $this->pdo->prepare("SELECT value FROM meta WHERE key = 'github_token'");
+            $stmt->execute();
+            $value = $stmt->fetchColumn();
+            $token = $value === false || $value === null ? '' : (string)$value;
+        } catch (Throwable) {
+            $token = '';
+        }
+
+        if ($token === '') {
+            $token = trim((string)($CRONPANEL_CONFIG['github_token'] ?? ''));
+        }
+
+        return $this->tokenCache = $token;
+    }
+
+    public function setToken(string $token): void
+    {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO meta (key, value) VALUES (?, ?)'
+            . ' ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+        );
+        $stmt->execute(['github_token', $token]);
+        $this->tokenCache = $token;
+    }
+
+    public function clearToken(): void
+    {
+        $this->pdo->prepare("DELETE FROM meta WHERE key = 'github_token'")->execute();
+        $this->tokenCache = null;
+    }
+
+    /** Descarga el zipball de la release (binario) al fichero indicado. */
+    public function downloadRelease(array $release, string $dest): void
+    {
+        $url = trim((string)($release['zip_url'] ?? ''));
+        if ($url === '') {
+            throw new RuntimeException('la release no trae zipball_url');
+        }
+
+        $body = $this->request($url);
+        if (strlen($body) < 1024) {
+            throw new RuntimeException('ZIP sospechosamente pequeño (< 1 KiB): descarga corrupta');
+        }
+
+        $this->ensureDir(dirname($dest));
+        if (@file_put_contents($dest, $body) === false) {
+            throw new RuntimeException('no se pudo guardar el ZIP descargado');
+        }
+    }
+
+    private function ensureDir(string $dir): void
+    {
+        if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+            throw new RuntimeException("no se pudo crear el directorio {$dir}");
+        }
+    }
+
     /**
      * Consulta (o lee de caché) la última release.
      *
@@ -119,7 +191,7 @@ final class Updater
             'Accept: application/vnd.github+json',
             'User-Agent: cronpanel/' . $this->installedVersion(),
         ];
-        $token = trim((string)($CRONPANEL_CONFIG['github_token'] ?? ''));
+        $token = $this->token();
         if ($token !== '') {
             $headers[] = 'Authorization: Bearer ' . $token;
         }

@@ -258,13 +258,40 @@ try {
     $r = Invoke-WebRequest -Uri "$base/updates" -WebSession $s
     Check 'GET /updates = 200' ($r.StatusCode -eq 200)
     Check 'muestra la versión instalada' ($r.Content -match 'v0\.1\.[0-9]+')
-    Check 'avisa si no pudo consultar' ($r.Content -match 'No se pudo consultar GitHub')
+    Check 'avisa si no pudo consultar' ($r.Content -match 'sin conexi|No se pudo consultar')
     Check 'enlace en el sidebar' ($r.Content -match 'Actualizaciones')
-    Check 'explica cómo se actualiza cada mitad' ($r.Content -match 'Cómo se actualiza cada mitad')
+    Check 'botones de instalar y reinstalar' ($r.Content -match 'Reinstalar \(forzar\)')
 
     $r = Invoke-WebRequest -Uri "$base/updates" -MaximumRedirection 5 `
         -WebSession (New-Object Microsoft.PowerShell.Commands.WebRequestSession)
     Check '/updates requiere sesión' ($r.Content -match 'Iniciar sesión')
+
+    # 15g. acciones de /updates
+    $r = Invoke-WebRequest -Uri "$base/updates" -WebSession $s
+    $csrf = Get-Csrf $r.Content
+
+    $r = Invoke-WebRequest -Uri "$base/updates" -Method Post -WebSession $s -MaximumRedirection 5 `
+        -Body @{ action = 'save_token'; github_token = 'ghp_SECRETO_E2E'; csrf = $csrf }
+    Check 'token guardado y enmascarado' ($r.Content -match 'ya configurado')
+    Check 'el token no se pinta' (-not ($r.Content -match 'ghp_SECRETO_E2E'))
+
+    $csrf = Get-Csrf $r.Content
+    $r = Invoke-WebRequest -Uri "$base/updates" -Method Post -WebSession $s -MaximumRedirection 5 `
+        -Body @{ action = 'save_token'; github_token = ''; csrf = $csrf }
+    Check 'token eliminado' ($r.Content -match 'Sin token')
+
+    # instalar sin releases (github_api_base apunta a un host muerto)
+    $versionAntes = (Get-Content (Join-Path $root 'public_html\VERSION') -Raw).Trim()
+    $csrf = Get-Csrf $r.Content
+    $r = Invoke-WebRequest -Uri "$base/updates" -Method Post -WebSession $s -MaximumRedirection 5 `
+        -Body @{ action = 'install'; csrf = $csrf }
+    $versionDespues = (Get-Content (Join-Path $root 'public_html\VERSION') -Raw).Trim()
+    Check 'install no tocó VERSION' ($versionAntes -eq $versionDespues)
+
+    $csrf = Get-Csrf $r.Content
+    $r = Invoke-WebRequest -Uri "$base/updates" -Method Post -WebSession $s -MaximumRedirection 5 `
+        -Body @{ action = 'restore'; backup = '../../etc/passwd'; csrf = $csrf }
+    Check 'restore rechaza nombre inválido' ($r.Content -match 'backup no válido')
 
     # 16. logout y login con las credenciales nuevas
     $r = Invoke-WebRequest -Uri "$base/logout" -Method Post -Body @{ csrf = $csrf } `

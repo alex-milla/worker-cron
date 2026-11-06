@@ -137,17 +137,27 @@ Estados válidos en `results`: `ok`, `failed`, `timeout`. El `output` se trunca
 a 64 KiB y el cuerpo máximo es 1 MiB. Si Apache no pasa la cabecera
 `Authorization`, el `.htaccess` ya la reexpone vía entorno.
 
-### Actualizaciones del panel
+### Actualizaciones
 
-El panel tiene una pantalla **informativa** en «Actualizaciones»: consulta
-`releases/latest` de GitHub (el repo es público, no hace falta token) y te dice
-si hay versión nueva, con las notas y el enlace de descarga. La respuesta se
-**cachea 30 min** en la tabla `meta` para no agotar el límite de la API
-(60 peticiones/hora por IP, y la del hosting es compartida).
+El panel **se actualiza solo desde GitHub**, igual que el worker: la única
+diferencia es el destino (el worker sincroniza `worker/`, el panel
+`public_html/`).
 
-**El panel no se actualiza solo**: se despliega subiendo `public_html/` al
-hosting. El auto-update de verdad está en el **worker** (LXC), que sí puede
-reescribir su propio código con backup previo.
+- **Instalar última versión** / **Reinstalar (forzar)**: descarga el zipball de
+  la release, hace **backup previo** en `data/backups/` y sincroniza por
+  manifiesto SHA-256 (solo copia lo cambiado y borra los ficheros gestionados
+  que hayan desaparecido).
+- **Nunca toca** `config/config.php` ni `data/` (BD, backups y temporal).
+- **Backups** con restauración desde la misma pantalla (con pre-backup del
+  estado actual).
+- **Token de GitHub** opcional, guardado en la BD y enmascarado en el
+  formulario (solo hace falta si el repo pasa a privado).
+- Tras instalar, **recarga la página** para cargar el código nuevo.
+
+> Requiere permiso de escritura en `public_html/` (normal en hosting
+> compartido) y, para extraer el ZIP, `ext-zip` **o** `PharData` (la extensión
+> `phar`, casi siempre activa). Si no hay ninguna de las dos, la pantalla lo
+> dice.
 
 Ajustes opcionales en `config.php`:
 
@@ -155,7 +165,7 @@ Ajustes opcionales en `config.php`:
 |---|---|---|
 | `github_repo` | `alex-milla/worker-cron` | repositorio del que se leen las releases |
 | `github_api_base` | `https://api.github.com` | GitHub Enterprise o pruebas |
-| `github_token` | vacío | solo si el repositorio pasa a privado |
+| `github_token` | vacío | semilla; el token real se guarda en la BD |
 
 Ojo: el auto-update del worker **solo sincroniza `worker/`**. Los cambios en
 `public_html/` se despliegan subiendo los ficheros al hosting.

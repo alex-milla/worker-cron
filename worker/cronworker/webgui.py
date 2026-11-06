@@ -33,7 +33,7 @@ from flask import (
     url_for,
 )
 
-from . import store
+from . import store, updater
 from .config import load_config, resolve_db_path
 
 log = logging.getLogger(__name__)
@@ -239,6 +239,7 @@ SHELL = """<!DOCTYPE html>
   </a>
   <nav class="h-actions">
     <a href="{{ url_for('job_new') }}" class="primary">+ Nueva tarea</a>
+    <a href="{{ url_for('updates_page') }}">Actualizaciones</a>
     <a href="{{ url_for('password_page') }}">Contraseña</a>
     <form method="post" action="{{ url_for('logout') }}">
       <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -381,6 +382,76 @@ JOB_FORM_CONTENT = """<section class="card" style="max-width:720px">
       <button type="submit" class="btn">Guardar</button>
     </div>
   </form>
+</section>"""
+
+UPDATES_CONTENT = """<section class="card">
+  <h2>Actualizaciones desde GitHub</h2>
+  {% if error %}<div class="alert-err">{{ error }}</div>{% endif %}
+  {% if result %}
+    {% if result.updated %}
+      <div class="alert-ok">Actualizado a <strong>v{{ result.remote }}</strong>
+        (copiados: {{ result.copied }} · borrados: {{ result.deleted }} ·
+         sin cambios: {{ result.skipped }} · errores: {{ result.errors }})
+        {% if result.error_detail %}<br><small>{{ result.error_detail|join('<br>') }}</small>{% endif %}
+        <br>Reinicia el worker para aplicar los cambios:
+        <code>systemctl restart cron-worker cron-gui</code></div>
+    {% else %}
+      <div class="alert-ok">{{ result.message }}</div>
+    {% endif %}
+  {% endif %}
+  <table>
+    <thead><tr><th>Instalada</th><th>Última en GitHub</th><th>Repositorio</th></tr></thead>
+    <tbody><tr>
+      <td>v{{ current }}</td>
+      <td>{% if remote %}v{{ remote }}{% if release_source %} <span class="pill off">({{ release_source }})</span>{% endif %}
+          {% else %}<span class="muted">sin releases publicadas</span>{% endif %}</td>
+      <td class="mono">{{ repo }}</td>
+    </tr></tbody>
+  </table>
+  {% if notes %}
+  <details style="margin-top:12px"><summary class="muted" style="cursor:pointer">Notas de la release</summary>
+    <pre style="white-space:pre-wrap; font-size:.85rem; color:var(--text)">{{ notes }}</pre></details>
+  {% endif %}
+  <div class="form-actions">
+    <form method="post" action="{{ url_for('updates_page') }}"
+          onsubmit="return confirm('¿Instalar v{{ remote }}? Se hará backup antes.');">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="install">
+      <button type="submit" class="btn" {% if not remote %}disabled{% endif %}>Instalar última versión</button>
+    </form>
+    <form method="post" action="{{ url_for('updates_page') }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="action" value="reinstall">
+      <button type="submit" class="btn cancel">Reinstalar (forzar)</button>
+    </form>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Backups</h2>
+  {% if backups %}
+  <table>
+    <thead><tr><th>Backup</th><th>Acción</th></tr></thead>
+    <tbody>
+    {% for b in backups[:10] %}
+      <tr>
+        <td class="mono">{{ b.name }}</td>
+        <td>
+          <form method="post" action="{{ url_for('updates_page') }}" style="display:inline"
+                onsubmit="return confirm('¿Restaurar {{ b.name }}? Se hará backup previo del estado actual.');">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="action" value="restore">
+            <input type="hidden" name="backup" value="{{ b.name }}">
+            <button type="submit">Restaurar</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">Sin backups todavía: se crean automáticamente antes de instalar o restaurar.</p>
+  {% endif %}
 </section>"""
 
 PASSWORD_CONTENT = """<section class="card" style="max-width:480px">
@@ -708,6 +779,60 @@ def create_app(config_path: str | None = None) -> Flask:
             conn.close()
         flash("Tarea eliminada", "ok")
         return redirect(url_for("dashboard"))
+
+    # ---- actualizaciones desde GitHub ----
+
+    @app.route("/updates", methods=["GET", "POST"])
+    def updates_page():
+        app_root = Path(__file__).resolve().parent.parent
+        current = updater.installed_version(app_root)
+        error = result = None
+        remote = notes = release_source = None
+
+        try:
+            release = updater.get_latest_release()
+            if release:
+                remote = release["version"]
+                notes = release["notes"]
+                release_source = release["source"]
+        except Exception as exc:  # noqa: BLE001 - se muestra en la pantalla
+            error = f"No se pudo consultar GitHub: {exc}"
+
+        if request.method == "POST":
+            if not check_csrf():
+                abort(400)
+            action = request.form.get("action", "")
+            try:
+                if action == "install":
+                    result = updater.update(app_root, force=False)
+                elif action == "reinstall":
+                    result = updater.update(app_root, force=True)
+                elif action == "restore":
+                    res = updater.restore_backup(
+                        request.form.get("backup", ""), app_root)
+                    flash(f"Backup restaurado ({res['restored']} ficheros)", "ok")
+                    return redirect(url_for("updates_page"))
+                else:
+                    abort(400)
+            except Exception as exc:  # noqa: BLE001 - mensaje directo
+                error = str(exc)
+            if result and result.get("updated"):
+                current = result["remote"]
+                remote = None if result.get("updated") else remote
+
+        content = render_template_string(
+            UPDATES_CONTENT,
+            current=current,
+            remote=remote,
+            notes=notes,
+            release_source=release_source,
+            result=result,
+            error=error,
+            repo=f"{updater.REPO_OWNER}/{updater.REPO_NAME}",
+            backups=updater.list_backups(app_root),
+            csrf=session.get("csrf", ""),
+        )
+        return page("Actualizaciones", content)
 
     # ---- públicos ----
 

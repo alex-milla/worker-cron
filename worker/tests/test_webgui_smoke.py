@@ -154,4 +154,9 @@ assert "<svg" in dash and "&lt;svg" not in dash, "iconos HTML escapados en el sh
 assert "sidebar-link" in dash and "app-sidebar" in dash
 print("15. iconos svg sin escapar: OK")
 
+# 16. 'icons.update' colisionaba con dict.update -> built-in method pintado
+assert "built-in method" not in dash, "colision icons.update con dict.update"
+assert (len(_re.findall(r'stroke-linejoin="round"', dash)) >= 9), "faltan iconos"
+print("16. colision dict.update: OK")
+
 print("\nTODOS LOS TESTS OK")

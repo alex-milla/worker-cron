@@ -352,7 +352,7 @@ SHELL = """<!DOCTYPE html>
         {{ icons.clock }}Tareas</a>
       <div class="sidebar-group-label">Sistema</div>
       <a class="sidebar-link{{ ' active' if active == 'updates' }}" href="{{ url_for('updates_page') }}">
-        {{ icons.update }}Actualizaciones</a>
+        {{ icons['update'] }}Actualizaciones</a>
       <a class="sidebar-link{{ ' active' if active == 'profile' }}" href="{{ url_for('password_page') }}">
         {{ icons.person }}Perfil y contraseña</a>
     </nav>

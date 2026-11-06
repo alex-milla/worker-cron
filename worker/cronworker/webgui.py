@@ -5,7 +5,7 @@ Pantallas:
     /          — Dashboard: jobs, próximas ejecuciones, últimas corridas
     /jobs/new  — Crear tarea (validación cron; se marca pending_sync para el hosting)
     /jobs/<id> — Editar / eliminar / activar-pausar
-    /password  — Cambiar contraseña
+    /password  — Perfil y contraseña (usuario + contraseña)
 
 Endpoints públicos (para monitorización sin sesión):
     /health    — JSON de vida
@@ -102,86 +102,183 @@ LOGIN_CSS = BASE_CSS + """
 """
 
 APP_CSS = BASE_CSS + """
-    header { background:var(--surface); border-bottom:1px solid var(--border);
-             padding:.75rem 1.5rem; display:flex; justify-content:space-between;
-             align-items:center; gap:1rem; position:sticky; top:0; z-index:10; }
-    .h-left { display:flex; align-items:center; gap:.75rem; }
-    .h-logo { display:inline-flex; align-items:center; justify-content:center;
-              width:2.25rem; height:2.25rem; border-radius:.5rem;
-              background:var(--brand); color:#fff; font-size:1.2rem; }
-    .h-title { font-weight:700; font-size:1.05rem; }
-    .h-sub { font-size:.78rem; color:var(--muted); }
-    .h-actions { display:flex; gap:.5rem; align-items:center; }
-    .h-actions a, .h-actions button { padding:.45rem .85rem; border-radius:.5rem;
-             font-size:.85rem; border:1px solid var(--border);
-             background:var(--surface); cursor:pointer; font-weight:500; }
-    .h-actions a { color:var(--muted); }
-    .h-actions a:hover { background:var(--surface-2); }
-    .h-actions .primary { background:var(--brand); border-color:var(--brand);
-                          color:#fff; }
-    .h-actions .primary:hover { background:var(--brand-hover); }
-    .logout-btn { color:#b91c1c; }
-    main { max-width:1100px; margin:1.5rem auto; padding:0 1rem; }
+    /* ===== tokens extra del shell (claro / oscuro) ===== */
+    .app-shell { --surface-2:#f1f5f9; --input-bg:#ffffff; --input-border:#d1d5db;
+        --brand-border:#fed7aa; --brand-soft:#fff7ed;
+        --nav-active-bg:#fff7ed; --nav-active-text:#c2410c; --row-hover:#fff7ed; }
+    [data-theme="dark"] .app-shell { --surface-2:#1e293b; --input-bg:#1e293b;
+        --input-border:#4b5563; --brand-border:#7c2d12; --brand-soft:#431407;
+        --brand-hover:#fdba74; --nav-active-bg:#431407; --nav-active-text:#fdba74;
+        --row-hover:rgba(249,115,22,.12); }
+
+    /* ===== shell: sidebar vertical 256px + topbar 64px + footer ===== */
+    .app-shell { display:flex; min-height:100vh; }
+    .shell-overlay { display:none; }
+    .app-sidebar { width:256px; flex-shrink:0; position:sticky; top:0; height:100vh;
+        display:flex; flex-direction:column; background:var(--surface);
+        border-right:1px solid var(--border); z-index:30; }
+    .sidebar-brand { display:flex; align-items:center; gap:.75rem; flex-shrink:0;
+        height:64px; padding:0 1.25rem; border-bottom:1px solid var(--border);
+        font-weight:700; font-size:1.08rem; }
+    .sidebar-logo { display:inline-flex; align-items:center; justify-content:center;
+        width:2rem; height:2rem; border-radius:.5rem; background:var(--brand);
+        color:#fff; font-size:1.1rem; flex-shrink:0; }
+    .sidebar-nav { flex:1 1 auto; overflow-y:auto; padding:.75rem; }
+    .sidebar-group-label { font-size:.7rem; font-weight:600; text-transform:uppercase;
+        letter-spacing:.06em; color:var(--muted); padding:1rem .75rem .3rem; }
+    .sidebar-group-label:first-child { padding-top:.25rem; }
+    .sidebar-link { display:flex; align-items:center; gap:.75rem; margin-bottom:2px;
+        padding:.5rem .75rem; border-radius:.5rem; font-size:.9rem; font-weight:500;
+        color:var(--muted); }
+    .sidebar-link svg { flex-shrink:0; }
+    .sidebar-link:hover { background:var(--surface-2); color:var(--text); }
+    .sidebar-link.active { background:var(--nav-active-bg); color:var(--nav-active-text); }
+    .sidebar-foot { flex-shrink:0; padding:.7rem 1.25rem; border-top:1px solid var(--border);
+        font-size:.75rem; color:var(--muted-soft); }
+    .app-main { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; min-height:100vh; }
+    .app-header { position:sticky; top:0; z-index:25; display:flex; align-items:center;
+        justify-content:space-between; gap:1rem; height:64px; flex-shrink:0;
+        padding:0 1.5rem; background:var(--surface); border-bottom:1px solid var(--border); }
+    .h-left { display:flex; align-items:center; gap:.55rem; min-width:0; }
+    .page-title { margin:0; font-size:1.15rem; font-weight:600; white-space:nowrap;
+        overflow:hidden; text-overflow:ellipsis; }
+    .h-actions { display:flex; align-items:center; gap:.25rem; flex-shrink:0; }
+    .icon-btn { display:inline-flex; align-items:center; justify-content:center;
+        width:2.5rem; height:2.5rem; border:none; border-radius:.5rem;
+        background:transparent; color:var(--muted); cursor:pointer; }
+    .icon-btn:hover { background:var(--surface-2); color:var(--text); }
+    .shell-menu { display:none; }
+    .user-menu { position:relative; }
+    .user-btn { display:inline-flex; align-items:center; gap:.5rem; padding:.4rem .7rem;
+        border:none; border-radius:.5rem; background:transparent; color:var(--text);
+        font-size:.9rem; font-weight:500; cursor:pointer; }
+    .user-btn:hover { background:var(--surface-2); }
+    .user-role { font-size:.7rem; font-weight:600; color:var(--brand-hover);
+        background:var(--brand-soft); border:1px solid var(--brand-border);
+        border-radius:999px; padding:1px .5rem; }
+    .user-panel { display:none; position:absolute; right:0; top:100%; min-width:230px;
+        margin:.4rem 0 0; padding:.35rem 0; list-style:none; z-index:120;
+        background:var(--surface); border:1px solid var(--border); border-radius:.75rem;
+        box-shadow:0 12px 32px rgba(0,0,0,.18); }
+    .user-menu.open .user-panel { display:block; }
+    .user-panel li a, .user-panel li button { display:flex; align-items:center; gap:.7rem;
+        width:100%; padding:.6rem 1rem; border:none; background:transparent;
+        color:var(--text); font-size:.9rem; cursor:pointer; text-align:left; }
+    .user-panel li a:hover, .user-panel li button:hover { background:var(--surface-2); }
+    .user-panel li.sep { border-top:1px solid var(--border); margin:.35rem 0; }
+    .page-container { width:100%; max-width:1440px; margin:0 auto; padding:1.5rem 1rem 3rem; }
+    .page-footer { border-top:1px solid var(--border); background:var(--surface); }
+    .page-footer .inner { max-width:1440px; margin:0 auto; display:flex; gap:1rem;
+        align-items:center; justify-content:space-between; padding:1.1rem 1rem;
+        font-size:.85rem; color:var(--muted); }
+    [data-theme="light"] .icon-sun { display:none; }
+    [data-theme="dark"] .icon-moon { display:none; }
+
+    /* ===== componentes (contrato de clases según ESPECIFICACION-UI) ===== */
     .card { background:var(--surface); border:1px solid var(--border);
-            border-radius:12px; padding:20px; margin-bottom:16px; }
-    h2 { margin:0 0 12px; font-size:1.05rem; display:flex; align-items:center;
-         gap:.5rem; }
-    .toolbar { display:flex; justify-content:space-between; align-items:center;
-               margin-bottom:4px; }
+        border-radius:.75rem; padding:1.5rem; margin-bottom:1rem; }
+    h2 { margin:0 0 .75rem; font-size:1.05rem; display:flex; align-items:center; gap:.5rem; }
+    .toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
     .warn-banner { background:#fef3c7; border:1px solid #fde68a; color:#92400e;
-                   padding:.6rem .9rem; border-radius:.5rem; font-size:.875rem;
-                   margin-bottom:1rem; }
+        padding:.6rem .9rem; border-radius:.5rem; font-size:.875rem; margin-bottom:1rem; }
+    [data-theme="dark"] .warn-banner { background:rgba(120,53,15,.3);
+        border-color:rgba(120,53,15,.5); color:#fcd34d; }
     .warn-banner a { text-decoration:underline; color:inherit; }
+    .alert-ok { background:#dcfce7; border:1px solid #bbf7d0; color:#15803d;
+        padding:.6rem .9rem; border-radius:.5rem; font-size:.875rem; margin-bottom:1rem; }
+    .alert-err { background:#fee2e2; border:1px solid #fca5a5; color:#b91c1c;
+        padding:.6rem .9rem; border-radius:.5rem; font-size:.875rem; margin-bottom:1rem; }
+    [data-theme="dark"] .alert-ok { background:rgba(20,83,45,.3);
+        border-color:rgba(20,83,45,.5); color:#86efac; }
+    [data-theme="dark"] .alert-err { background:rgba(127,29,29,.3);
+        border-color:rgba(127,29,29,.5); color:#fca5a5; }
     table { width:100%; border-collapse:collapse; font-size:.9rem; }
-    th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--border);
-             vertical-align:middle; }
-    th { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em;
-         color:var(--muted); }
-    tbody tr:hover td { background:var(--brand-soft); }
+    th, td { text-align:left; padding:.55rem .7rem; border-bottom:1px solid var(--border);
+        vertical-align:middle; }
+    th { font-size:.72rem; font-weight:600; text-transform:uppercase;
+        letter-spacing:.05em; color:var(--muted); }
+    tbody tr:hover td { background:var(--row-hover); }
     .pill { display:inline-block; padding:2px 10px; border-radius:999px;
-            font-size:.75rem; font-weight:600; border:1px solid; white-space:nowrap; }
-    .pill.ok   { color:var(--ok);   border-color:#bbf7d0; background:#dcfce7; }
-    .pill.bad  { color:var(--bad);  border-color:#fca5a5; background:#fee2e2; }
+        font-size:.75rem; font-weight:600; border:1px solid; white-space:nowrap; }
+    .pill.ok { color:var(--ok); border-color:#bbf7d0; background:#dcfce7; }
+    .pill.bad { color:var(--bad); border-color:#fca5a5; background:#fee2e2; }
     .pill.warn { color:var(--warn); border-color:#fde68a; background:#fef3c7; }
-    .pill.off  { color:var(--muted); border-color:var(--border); background:#f3f4f6; }
-    .pill.brand{ color:var(--brand-hover); border-color:var(--brand-border);
-                 background:var(--brand-soft); }
+    .pill.off { color:var(--muted); border-color:var(--border); background:var(--surface-2); }
+    .pill.brand { color:var(--brand-hover); border-color:var(--brand-border);
+        background:var(--brand-soft); }
+    [data-theme="dark"] .pill.ok { background:rgba(20,83,45,.3); border-color:rgba(20,83,45,.5); }
+    [data-theme="dark"] .pill.bad { background:rgba(127,29,29,.3); border-color:rgba(127,29,29,.5); }
+    [data-theme="dark"] .pill.warn { background:rgba(120,53,15,.3); border-color:rgba(120,53,15,.5); }
     .muted { color:var(--muted); font-size:.85rem; }
-    .mono { font-family:ui-monospace,'JetBrains Mono',monospace; font-size:.82rem; }
+    .mono { font-family:ui-monospace,"JetBrains Mono",monospace; font-size:.82rem; }
     .row-actions { display:flex; gap:.4rem; white-space:nowrap; }
     .row-actions button, .row-actions a { padding:.3rem .6rem; font-size:.78rem;
-             border:1px solid var(--border); background:var(--surface);
-             border-radius:.4rem; cursor:pointer; }
+        border:1px solid var(--border); background:var(--surface);
+        border-radius:.4rem; cursor:pointer; color:var(--text); }
+    .row-actions button:hover, .row-actions a:hover { background:var(--surface-2); }
     .row-actions .danger { color:#b91c1c; border-color:#fca5a5; }
     .row-actions .danger:hover { background:#fee2e2; }
+    [data-theme="dark"] .row-actions .danger { color:#fca5a5; }
     .field { margin-bottom:.9rem; }
     .field label { display:block; font-size:.78rem; font-weight:500;
-                   color:var(--muted); margin-bottom:.30rem; }
-    .field input, .field textarea, .field select { width:100%; padding:.55rem .75rem;
-             border-radius:.5rem; border:1px solid var(--input-border);
-             background:var(--input-bg); font-size:.92rem; outline:none; }
+        color:var(--muted); margin-bottom:.3rem; }
+    .field input, .field textarea { width:100%; padding:.55rem .75rem;
+        border-radius:.5rem; border:1px solid var(--input-border);
+        background:var(--input-bg); color:var(--text); font-size:.92rem; outline:none; }
     .field input:focus, .field textarea:focus { box-shadow:0 0 0 2px var(--focus);
-             border-color:transparent; }
+        border-color:transparent; }
     .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
-    .grid-2 .field { margin-bottom:.9rem; }
     textarea { font-family:ui-monospace,monospace; min-height:96px; resize:vertical; }
     .helper { font-size:.75rem; color:var(--muted); margin-top:.25rem; }
-    .alert-ok { background:#dcfce7; border:1px solid #bbf7d0; color:#15803d;
-                padding:.6rem .9rem; border-radius:.5rem; font-size:.875rem;
-                margin-bottom:1rem; }
-    .alert-err { background:#fee2e2; border:1px solid #fca5a5; color:#b91c1c;
-                 padding:.6rem .9rem; border-radius:.5rem; font-size:.875rem;
-                 margin-bottom:1rem; }
     .form-actions { display:flex; gap:.6rem; justify-content:flex-end;
-                    margin-top:1.2rem; padding-top:1rem;
-                    border-top:1px solid var(--border); }
+        margin-top:1.2rem; padding-top:1rem; border-top:1px solid var(--border); }
     .form-actions .btn { width:auto; padding:.55rem 1.2rem; }
     .form-actions .cancel { background:var(--surface); color:var(--muted);
-                            border:1px solid var(--border); }
-    @media (max-width:640px){ .grid-2 { grid-template-columns:1fr; } }
+        border:1px solid var(--border); }
+    .btn { padding:.55rem 1.2rem; background:var(--brand); color:#fff; border:none;
+        border-radius:.5rem; font-weight:500; font-size:.92rem; cursor:pointer;
+        transition:background .15s; text-decoration:none; display:inline-flex;
+        align-items:center; gap:.5rem; }
+    .btn:hover { background:var(--brand-hover); }
+    details summary { cursor:pointer; }
+    .card input[type="checkbox"] { width:auto; }
+
+    /* ===== responsive: sidebar como drawer < lg (1024px) ===== */
+    @media (max-width:1023px) {
+        .shell-menu { display:inline-flex; }
+        .shell-overlay { position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:40; }
+        .app-shell.drawer-open .shell-overlay { display:block; }
+        .app-sidebar { position:fixed; inset:0 auto 0 0; transform:translateX(-100%);
+            transition:transform .2s ease; box-shadow:0 0 40px rgba(0,0,0,.3); }
+        .app-shell.drawer-open .app-sidebar { transform:none; }
+        .grid-2 { grid-template-columns:1fr; }
+    }
 """
 
 BASE_CSS_TAG = "<style>{}</style>"
+
+def _svg(body, size=18):
+    return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
+            f'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+            f'stroke-linejoin="round" aria-hidden="true">{body}</svg>')
+
+ICONS = {
+    "menu": _svg('<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/>'
+                 '<line x1="4" y1="18" x2="20" y2="18"/>', 20),
+    "grid": _svg('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>'
+                 '<rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'),
+    "clock": _svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
+    "update": _svg('<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>'),
+    "person": _svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6.5 8-6.5s8 2.5 8 6.5"/>'),
+    "logout": _svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>'
+                   '<path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>'),
+    "chevron": _svg('<path d="M6 9l6 6 6-6"/>'),
+    "sun": _svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4'
+                'M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>', 20)
+                .replace('<svg ', '<svg class="icon-sun" '),
+    "moon": _svg('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>', 20)
+                .replace('<svg ', '<svg class="icon-moon" '),
+}
 
 
 # --------------------------------------------------------------- templates --
@@ -222,44 +319,110 @@ LOGIN_PAGE = """<!DOCTYPE html>
 </html>"""
 
 SHELL = """<!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ title }} · {{ app_name }}</title>
   <style>{{ app_css }}</style>
+  <script>(function(){try{var t=localStorage.getItem('cw-theme');if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();</script>
 </head>
 <body>
-<header>
-  <a class="h-left" href="{{ url_for('dashboard') }}">
-    <span class="h-logo">⏱</span>
-    <span>
-      <span class="h-title">{{ app_name }}</span><br>
-      <span class="h-sub">{{ worker_name }} · sync {{ revision or '—' }}</span>
-    </span>
-  </a>
-  <nav class="h-actions">
-    <a href="{{ url_for('job_new') }}" class="primary">+ Nueva tarea</a>
-    <a href="{{ url_for('updates_page') }}">Actualizaciones</a>
-    <a href="{{ url_for('password_page') }}">Contraseña</a>
-    <form method="post" action="{{ url_for('logout') }}">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <button type="submit" class="logout-btn">Salir</button>
-    </form>
-  </nav>
-</header>
-<main>
-  {% if default_password %}
-  <div class="warn-banner">⚠️ Estás usando la contraseña por defecto (admin/admin).
-    <a href="{{ url_for('password_page') }}">Cámbiala ahora</a></div>
-  {% endif %}
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for cat, msg in messages %}
-      <div class="{{ 'alert-ok' if cat == 'ok' else 'alert-err' }}">{{ msg }}</div>
-    {% endfor %}
-  {% endwith %}
-  {{ content|safe }}
-</main>
+<div class="app-shell">
+
+  <div class="shell-overlay" data-shell-overlay></div>
+
+  <aside class="app-sidebar" id="app-sidebar" aria-label="Navegación principal">
+    <a class="sidebar-brand" href="{{ url_for('dashboard') }}">
+      <span class="sidebar-logo">⏱</span><span>{{ app_name }}</span>
+    </a>
+    <nav class="sidebar-nav">
+      <div class="sidebar-group-label">Gestión</div>
+      <a class="sidebar-link{{ ' active' if active == 'dashboard' }}" href="{{ url_for('dashboard') }}">
+        {{ icons.grid }}Dashboard</a>
+      <a class="sidebar-link{{ ' active' if active == 'jobs' }}" href="{{ url_for('job_new') }}">
+        {{ icons.clock }}Tareas</a>
+      <div class="sidebar-group-label">Sistema</div>
+      <a class="sidebar-link{{ ' active' if active == 'updates' }}" href="{{ url_for('updates_page') }}">
+        {{ icons.update }}Actualizaciones</a>
+      <a class="sidebar-link{{ ' active' if active == 'profile' }}" href="{{ url_for('password_page') }}">
+        {{ icons.person }}Perfil y contraseña</a>
+    </nav>
+    <div class="sidebar-foot mono">v{{ version }} · {{ worker_name }}</div>
+  </aside>
+
+  <div class="app-main">
+    <header class="app-header">
+      <div class="h-left">
+        <button type="button" class="icon-btn shell-menu" data-shell-menu aria-label="Abrir menú">
+          {{ icons.menu }}</button>
+        <h1 class="page-title">{{ title }}</h1>
+      </div>
+      <div class="h-actions">
+        <button type="button" class="icon-btn" data-theme-toggle aria-label="Cambiar tema">
+          {{ icons.moon }}{{ icons.sun }}</button>
+        <div class="user-menu" data-user-menu>
+          <button type="button" class="user-btn" data-user-menu-toggle aria-expanded="false">
+            {{ icons.person }}<span>{{ user or 'admin' }}</span>
+            <span class="user-role">admin</span>{{ icons.chevron }}</button>
+          <ul class="user-panel">
+            <li><a href="{{ url_for('password_page') }}">{{ icons.person }}Perfil y contraseña</a></li>
+            <li class="sep" role="separator"></li>
+            <li><form method="post" action="{{ url_for('logout') }}">
+              <input type="hidden" name="csrf" value="{{ csrf }}">
+              <button type="submit">{{ icons.logout }}Salir</button></form></li>
+          </ul>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="page-container">
+        {{ content|safe }}
+      </div>
+    </main>
+
+    <footer class="page-footer">
+      <div class="inner">
+        <span>{{ app_name }} — programador de crons</span>
+        <span class="mono">v{{ version }} · {{ worker_name }}</span>
+      </div>
+    </footer>
+  </div>
+</div>
+
+<script>
+(function(){
+  'use strict';
+  var d = document.documentElement;
+  function mode(){ return d.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'; }
+  var tt = document.querySelector('[data-theme-toggle]');
+  if (tt) tt.addEventListener('click', function(){
+    var n = mode() === 'dark' ? 'light' : 'dark';
+    d.setAttribute('data-theme', n);
+    try { localStorage.setItem('cw-theme', n); } catch (e) {}
+  });
+
+  var shell = document.querySelector('.app-shell');
+  var mbtn = document.querySelector('[data-shell-menu]');
+  var ov = document.querySelector('[data-shell-overlay]');
+  if (mbtn && shell) mbtn.addEventListener('click', function(){ shell.classList.toggle('drawer-open'); });
+  if (ov && shell) ov.addEventListener('click', function(){ shell.classList.remove('drawer-open'); });
+  document.querySelectorAll('.sidebar-link').forEach(function(a){
+    a.addEventListener('click', function(){ if (shell) shell.classList.remove('drawer-open'); });
+  });
+  document.addEventListener('keydown', function(e){ if (e.key === 'Escape' && shell) shell.classList.remove('drawer-open'); });
+
+  var um = document.querySelector('[data-user-menu]');
+  var ub = document.querySelector('[data-user-menu-toggle]');
+  if (ub && um) {
+    ub.addEventListener('click', function(e){ e.stopPropagation(); um.classList.toggle('open');
+      ub.setAttribute('aria-expanded', um.classList.contains('open') ? 'true' : 'false'); });
+    document.addEventListener('click', function(e){ if (!um.contains(e.target)) um.classList.remove('open'); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') um.classList.remove('open'); });
+  }
+})();
+</script>
 </body>
 </html>"""
 
@@ -491,6 +654,8 @@ def create_app(config_path: str | None = None) -> Flask:
     app = Flask(__name__)
     app.config["WORKER_DB"] = str(db_path)
     app.config["WORKER_NAME"] = worker_name
+    vfile = Path(__file__).resolve().parent.parent / "VERSION"
+    app.config["APP_VERSION"] = vfile.read_text(encoding="utf-8").strip() if vfile.is_file() else "0.0.0"
 
     def db():
         return store.connect(app.config["WORKER_DB"])
@@ -532,11 +697,20 @@ def create_app(config_path: str | None = None) -> Flask:
         finally:
             conn.close()
         fresh_csrf()
+        path = request.path
+        active = ("dashboard" if path == "/" else
+                  "jobs" if path.startswith("/jobs") else
+                  "updates" if path.startswith("/updates") else
+                  "profile" if path.startswith("/password") else "")
         return render_template_string(
             SHELL,
             title=title,
             app_name=APP_NAME,
             worker_name=app.config["WORKER_NAME"],
+            version=app.config["APP_VERSION"],
+            user=session.get("username", ""),
+            active=active,
+            icons=ICONS,
             revision=revision,
             default_password=default_pw,
             csrf=session["csrf"],

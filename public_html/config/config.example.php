@@ -24,6 +24,8 @@ return [
     'api_version' => 'v1',
 
     // --- Aplicación ---
+    // Prefijo si public_html/ no es la raíz del dominio (p. ej. '/cron').
+    'base_path' => '',
     'app_name' => 'Cron Scheduler',
     'timezone' => 'Europe/Madrid',
     'debug'    => false,

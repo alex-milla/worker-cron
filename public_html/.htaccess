@@ -3,6 +3,8 @@
     RewriteEngine On
     # La BD SQLite y sus temporales viven en data/: nunca por web
     RewriteRule ^data(/|$) - [F,L]
+    # Código y plantillas: solo se incluyen desde PHP, nunca por HTTP
+    RewriteRule ^(src|views|sql)(/|$) - [F,L]
     # La API se sirve por /api/index.php
     RewriteRule ^api/(.*)$ api/index.php [QSA,L]
     # Todo lo demás pasa por el front controller si el fichero no existe

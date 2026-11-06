@@ -63,14 +63,26 @@ y apunta el dominio a `public_html/`.
 Requisitos: **PHP 8.0+ con `pdo_sqlite`**. El esquema de la BD
 (`data/panel.sqlite`) se crea **automáticamente** la primera vez que la app
 abre la conexión (`src/Database.php`), así que ya no hay que cargar
-`sql/schema.sqlite.sql` a mano. `data/` queda protegido por el `.htaccess`
-raíz (`RewriteRule ^data(/|$) - [F,L]`), además del bloqueo por extensión.
+`sql/schema.sqlite.sql` a mano. `data/`, `src/`, `views/` y `sql/` están
+bloqueados desde el `.htaccess` raíz.
 
-Comprobar la capa de datos sin desplegar nada:
+El panel ya es funcional: **login con sesión + CSRF**, dashboard, alta/edición
+de tareas y activar/pausar/borrar. La API del worker (`/api/v1/*`) sigue en 501
+hasta la fase 4, así que **el worker todavía no sincroniza nada**.
+
+Comprobar el panel sin desplegar nada (PHP en el PATH):
 
 ```bash
-php tools/panel_smoke.php     # 37 comprobaciones: esquema, CRUD, revisión, cron
+php tools/panel_smoke.php              # 37 comprobaciones de la capa de datos
+pwsh -File tools/panel_e2e.ps1         # 31 comprobaciones HTTP (login, CSRF, CRUD)
 ```
+
+Para probarlo en local con el mismo enrutado que el hosting:
+
+```bash
+php -S 127.0.0.1:8099 -t public_html tools/dev_server.php
+```
+(`tools/` vive fuera de `public_html`, no se sube al hosting.)
 
 Ojo: el auto-update del worker **solo sincroniza `worker/`**. Los cambios en
 `public_html/` se despliegan subiendo los ficheros al hosting.

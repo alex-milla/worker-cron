@@ -1,0 +1,7 @@
+# Cliente HTTP (API del hosting + GUI local)
+aiohttp>=3.9
+apscheduler>=3.10,<4
+PyYAML>=6.0
+
+# GUI local
+flask>=3.0

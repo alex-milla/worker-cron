@@ -1,0 +1,2 @@
+# Deniega todo acceso web directo al directorio de configuración
+Require all denied

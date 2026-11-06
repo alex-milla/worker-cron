@@ -1,0 +1,22 @@
+# Deniega el acceso directo a todo salvo index.php y /api
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    # La API se sirve por /api/index.php
+    RewriteRule ^api/(.*)$ api/index.php [QSA,L]
+    # Todo lo demás pasa por el front controller si el fichero no existe
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^(.*)$ index.php [QSA,L]
+</IfModule>
+
+# Bloquea ficheros sensibles
+<FilesMatch "^(config\.php|\.env|.*\.sql|.*\.sqlite.*|.*\.db|.*\.log|\.git.*)$">
+    Require all denied
+</FilesMatch>
+
+# Cabeceras básicas de seguridad
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set Referrer-Policy "no-referrer-when-downgrade"
+</IfModule>

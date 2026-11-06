@@ -1,0 +1,43 @@
+/* Panel Cron Scheduler — hoja de estilos.
+ * Sistema de tokens (marca naranja + semánticos) según ESPECIFICACION-UI.md.
+ * TODO: tokens de diseño, tema claro/oscuro con data-theme, shell, componentes.
+ */
+
+:root {
+    /* Marca */
+    --brand-500: #f97316;
+    --brand-600: #ea580c;
+    --brand-700: #c2410c;
+
+    /* Superficies (tema claro) */
+    --bg: #f9fafb;
+    --surface: #ffffff;
+    --text: #111827;
+    --text-muted: #6b7280;
+    --border: #e5e7eb;
+
+    /* Semánticos */
+    --ok-text: #15803d;
+    --warn-text: #b45309;
+    --danger-text: #b91c1c;
+    --info-text: #1d4ed8;
+}
+
+[data-theme="dark"] {
+    --bg: #111827;
+    --surface: #0f172a;
+    --text: #ffffff;
+    --text-muted: #9ca3af;
+    --border: #374151;
+    --ok-text: #86efac;
+    --warn-text: #fcd34d;
+    --danger-text: #fca5a5;
+    --info-text: #93c5fd;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+}

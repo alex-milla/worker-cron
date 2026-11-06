@@ -1,0 +1,29 @@
+# Configuración del worker (LXC)
+# Copia este fichero a config.yaml y ajusta los valores.
+
+hosting:
+  # URL base del panel en el hosting compartido (sin /api)
+  base_url: "https://panel.example.com"
+  # Token Bearer; debe coincidir con 'api_token' de la config del panel
+  api_token: "CAMBIA-ESTE-TOKEN-LARGO-Y-ALEATORIO"
+  # Intervalo de polling en minutos (mínimo recomendado: 1) — no saturar el hosting
+  poll_interval_min: 1
+  # Backoff exponencial en caso de error (en minutos, se duplica hasta el máximo)
+  backoff_max_min: 30
+  timeout_sec: 30
+
+worker:
+  # Nombre con el que el worker se registra en el panel
+  name: "lxc-cron-worker"
+  # BD local (espejo de jobs y registro de la próxima ejecución)
+  db_path: "data/worker.sqlite"
+  # Directorio de logs
+  log_dir: "logs"
+  # Zona horaria de referencia para las expresiones cron
+  timezone: "Europe/Madrid"
+
+webgui:
+  # GUI local de monitorización
+  enabled: true
+  listen_host: "0.0.0.0"
+  listen_port: 8080

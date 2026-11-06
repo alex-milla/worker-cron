@@ -1,0 +1,40 @@
+# ==== Tokens y credenciales ====
+env/
+*.env
+.env
+*.token
+*_secret*
+
+# ==== Documentación de trabajo / checkpoints ====
+md/
+
+# ==== Config real (solo se versiona el ejemplo) ====
+public_html/config/config.php
+worker/config.yaml
+
+# ==== Datos y estado ====
+public_html/data/
+public_html/logs/
+worker/data/
+worker/logs/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# ==== Sistema / editor ====
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/
+
+# ==== Python ====
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ==== Dependencias / build ====
+node_modules/
+vendor/

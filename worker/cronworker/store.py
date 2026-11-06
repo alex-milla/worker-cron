@@ -83,17 +83,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 
 def ensure_bootstrap_user(conn: sqlite3.Connection) -> bool:
-    """Crea admin/admin la primera vez. Devuelve True si lo acaba de crear."""
+    """Crea admin/admin la primera vez. Race-safe: con gunicorn multiproceso
+    varios workers pueden ejecutarlo simultáneamente contra la misma BD."""
     n = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if n:
         return False
-    conn.execute(
-        "INSERT INTO users (username, pass_hash) VALUES (?, ?)",
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO users (username, pass_hash) VALUES (?, ?)",
         ("admin", generate_password_hash("admin")),
     )
-    set_meta(conn, "default_password", "1")
+    created = bool(cur.rowcount)
+    if created:
+        set_meta(conn, "default_password", "1")
     conn.commit()
-    return True
+    return created
 
 
 def verify_user(conn: sqlite3.Connection, username: str, password: str) -> int | None:

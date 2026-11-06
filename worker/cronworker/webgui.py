@@ -491,15 +491,19 @@ def create_app(config_path: str | None = None) -> Flask:
     def db():
         return store.connect(app.config["WORKER_DB"])
 
-    # ---- sesión: secret persistido en la BD local ----
+    # ---- sesión: secret persistido en la BD local (race-safe entre workers) ----
     conn = db()
     try:
         store.ensure_bootstrap_user(conn)
         secret = store.get_meta(conn, "webgui_secret")
         if not secret:
-            secret = secrets.token_hex(32)
-            store.set_meta(conn, "webgui_secret", secret)
+            conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES ('webgui_secret', ?)",
+                (secrets.token_hex(32),),
+            )
             conn.commit()
+            # si perdió la carrera, usa el que ya guardó otro worker
+            secret = store.get_meta(conn, "webgui_secret")
     finally:
         conn.close()
     app.secret_key = secret

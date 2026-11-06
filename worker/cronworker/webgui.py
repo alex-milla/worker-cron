@@ -33,6 +33,7 @@ from flask import (
     session,
     url_for,
 )
+from markupsafe import Markup
 
 from . import store, updater
 from .config import load_config, resolve_db_path
@@ -257,10 +258,17 @@ APP_CSS = BASE_CSS + """
 
 BASE_CSS_TAG = "<style>{}</style>"
 
-def _svg(body, size=18):
-    return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
-            f'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
-            f'stroke-linejoin="round" aria-hidden="true">{body}</svg>')
+def _svg(body, size=18, css_class=""):
+    # Markup: los iconos viajan como HTML de confianza (render_template_string
+    # auto-escapa por defecto y sin esto se vería el código SVG en pantalla).
+    # La clase va como parámetro: Markup.replace() ESCAPA sus argumentos y
+    # usar .replace('<svg ', ...) rompía los iconos de sol/luna.
+    cls = f' class="{css_class}"' if css_class else ""
+    return Markup(
+        f'<svg{cls} width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
+        f'stroke="currentColor" stroke-width="2" stroke-linecap="round" '
+        f'stroke-linejoin="round" aria-hidden="true">{body}</svg>'
+    )
 
 ICONS = {
     "menu": _svg('<line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/>'
@@ -274,10 +282,10 @@ ICONS = {
                    '<path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>'),
     "chevron": _svg('<path d="M6 9l6 6 6-6"/>'),
     "sun": _svg('<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4'
-                'M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>', 20)
-                .replace('<svg ', '<svg class="icon-sun" '),
-    "moon": _svg('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>', 20)
-                .replace('<svg ', '<svg class="icon-moon" '),
+                'M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+                20, "icon-sun"),
+    "moon": _svg('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+                 20, "icon-moon"),
 }
 
 

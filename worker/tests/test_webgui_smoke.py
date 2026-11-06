@@ -148,4 +148,10 @@ assert "GitHub" in page_html and "Backups" in page_html
 assert 'name="csrf" value=""' not in page_html, "csrf vacio en /updates"
 print("14. /updates: OK")
 
+# 15. los iconos SVG del sidebar NO se ven escapados (regresion del menu roto)
+dash = c5.get("/").data.decode("utf-8")
+assert "<svg" in dash and "&lt;svg" not in dash, "iconos HTML escapados en el shell"
+assert "sidebar-link" in dash and "app-sidebar" in dash
+print("15. iconos svg sin escapar: OK")
+
 print("\nTODOS LOS TESTS OK")

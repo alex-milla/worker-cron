@@ -600,6 +600,26 @@ UPDATES_CONTENT = """<section class="card">
 </section>
 
 <section class="card">
+  <h2>Token de GitHub</h2>
+  {% if token_saved %}<div class="alert-ok">Token guardado correctamente</div>{% endif %}
+  <p class="muted">Opcional: solo hace falta si el repositorio pasa a privado o
+    para saltarte el límite de peticiones de la API. Se guarda en la BD local
+    del worker (nunca se envía al navegador una vez guardado).</p>
+  <form method="post" action="{{ url_for('updates_page') }}" style="max-width:480px">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="action" value="save_token">
+    <div class="field">
+      <label for="github_token">Token personal (fine-grained PAT)</label>
+      <input id="github_token" type="password" name="github_token"
+             autocomplete="off"
+             placeholder="{{ '•••••••• (ya configurado — deja vacío para mantener)' if token_set else 'github_pat_...' }}">
+      <div class="helper">{% if token_set %}Hay un token configurado: escribe uno nuevo para sustituirlo o envíalo vacío para eliminarlo.{% else %}Sin token: solo funciona con repositorio público (60 peticiones/hora).{% endif %}</div>
+    </div>
+    <div class="form-actions"><button type="submit" class="btn">Guardar token</button></div>
+  </form>
+</section>
+
+<section class="card">
   <h2>Backups</h2>
   {% if backups %}
   <table>
@@ -697,7 +717,7 @@ def create_app(config_path: str | None = None) -> Flask:
         sent = request.form.get("csrf", "")
         return bool(sent and secrets.compare_digest(sent, session.get("csrf", "")))
 
-    def page(title: str, content: str):
+    def page(title: str, content: str, active: str = ""):
         conn = db()
         try:
             revision = store.get_meta(conn, "revision")
@@ -1005,25 +1025,34 @@ def create_app(config_path: str | None = None) -> Flask:
         current = updater.installed_version(app_root)
         error = result = None
         remote = notes = release_source = None
-
-        try:
-            release = updater.get_latest_release()
-            if release:
-                remote = release["version"]
-                notes = release["notes"]
-                release_source = release["source"]
-        except Exception as exc:  # noqa: BLE001 - se muestra en la pantalla
-            error = f"No se pudo consultar GitHub: {exc}"
+        token_saved = False
 
         if request.method == "POST":
             if not check_csrf():
                 abort(400)
             action = request.form.get("action", "")
+            conn = db()
+            try:
+                if action == "save_token":
+                    token_v = request.form.get("github_token", "").strip()
+                    if token_v:
+                        store.set_meta(conn, "github_token", token_v)
+                        conn.commit()
+                        token_saved = True
+                        flash("Token de GitHub guardado", "ok")
+                    elif store.get_meta(conn, "github_token"):
+                        conn.execute("DELETE FROM meta WHERE key = 'github_token'")
+                        conn.commit()
+                        flash("Token de GitHub eliminado", "ok")
+                    return redirect(url_for("updates_page"))
+                gh_token = store.get_meta(conn, "github_token")
+            finally:
+                conn.close()
             try:
                 if action == "install":
-                    result = updater.update(app_root, force=False)
+                    result = updater.update(app_root, token=gh_token, force=False)
                 elif action == "reinstall":
-                    result = updater.update(app_root, force=True)
+                    result = updater.update(app_root, token=gh_token, force=True)
                 elif action == "restore":
                     res = updater.restore_backup(
                         request.form.get("backup", ""), app_root)
@@ -1035,7 +1064,22 @@ def create_app(config_path: str | None = None) -> Flask:
                 error = str(exc)
             if result and result.get("updated"):
                 current = result["remote"]
-                remote = None if result.get("updated") else remote
+                remote = None
+
+        else:
+            conn = db()
+            try:
+                gh_token = store.get_meta(conn, "github_token")
+            finally:
+                conn.close()
+            try:
+                release = updater.get_latest_release(gh_token)
+                if release:
+                    remote = release["version"]
+                    notes = release["notes"]
+                    release_source = release["source"]
+            except Exception as exc:  # noqa: BLE001 - se muestra en la pantalla
+                error = f"No se pudo consultar GitHub: {exc}"
 
         content = render_template_string(
             UPDATES_CONTENT,
@@ -1045,11 +1089,13 @@ def create_app(config_path: str | None = None) -> Flask:
             release_source=release_source,
             result=result,
             error=error,
+            token_saved=token_saved,
+            token_set=bool(gh_token),
             repo=f"{updater.REPO_OWNER}/{updater.REPO_NAME}",
             backups=updater.list_backups(app_root),
             csrf=session.get("csrf", ""),
         )
-        return page("Actualizaciones", content)
+        return page("Actualizaciones", content, active="updates")
 
     # ---- públicos ----
 

@@ -159,4 +159,21 @@ assert "built-in method" not in dash, "colision icons.update con dict.update"
 assert (len(_re.findall(r'stroke-linejoin="round"', dash)) >= 9), "faltan iconos"
 print("16. colision dict.update: OK")
 
+# 17. token de GitHub: guardar (en BD local), enmascarado, y eliminar
+page_html = c5.get("/updates").data.decode("utf-8")
+tok = _re.search(r'name="csrf" value="([^"]*)"', page_html).group(1)
+r = c5.post("/updates", data={"action": "save_token", "github_token": "ghp_SECRETO-123",
+                              "csrf": tok})
+assert r.status_code == 302
+page_html = c5.get("/updates").data.decode("utf-8")
+assert "ghp_SECRETO-123" not in page_html, "el token se pinta en el HTML!"
+assert "ya configurado" in page_html
+artifact = page_html
+print("17a. token guardado y enmascarado: OK")
+
+r = c5.post("/updates", data={"action": "save_token", "github_token": "", "csrf": tok})
+page_html = c5.get("/updates").data.decode("utf-8")
+assert "ya configurado" not in page_html and "Sin token" in page_html
+print("17b. token eliminado: OK")
+
 print("\nTODOS LOS TESTS OK")

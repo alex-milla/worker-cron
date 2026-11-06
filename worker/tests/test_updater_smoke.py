@@ -111,4 +111,43 @@ assert updater.installed_version(app) == "0.5.3"
 assert updater.installed_version(tmp / "noexiste") == "0.0.0"
 print("11. VERSION: OK")
 
+# 12. update() end-to-end con release simulada (sin red): zip local + mocks
+import zipfile as zf2  # noqa: E402
+from cronworker import updater as U  # noqa: E402
+if U is None:
+    from cronworker import updater as U
+
+app2 = tmp / "app2"
+app2.mkdir()
+(app2 / "cronworker").mkdir()
+(app2 / "cronworker" / "__init__.py").write_text("viejo\n")
+(app2 / "config.yaml").write_text("worker:\n  name: PROD\n")
+(app2 / "VERSION").write_text("0.1.0\n")
+
+zip_path2 = tmp / "rel.zip"
+with zf2.ZipFile(zip_path2, "w") as z:
+    z.writestr("repo-sha/worker/cronworker/__init__.py", "nuevo\n")
+    z.writestr("repo-sha/worker/VERSION", "0.9.9\n")
+
+orig_get, orig_dl = updater.get_latest_release, updater.download_file
+updater.get_latest_release = lambda token=None: {
+    "version": "0.9.9", "zip_url": "http://local/fake.zip",
+    "notes": "notas de prueba", "published_at": None, "source": "release"
+}
+try:
+    def fake_download(url, dest, token=None, timeout=120):
+        dest.write_bytes(zip_path2.read_bytes())
+        return dest
+    updater.download_file = fake_download
+    res = updater.update(app2, token="mi-token-gh")
+finally:
+    updater.get_latest_release, updater.download_file = orig_get, orig_dl
+
+assert res["updated"] is True and res["remote"] == "0.9.9", res
+assert (app2 / "VERSION").read_text().strip() == "0.9.9"
+assert (app2 / "cronworker" / "__init__.py").read_text() == "nuevo\n"
+assert (app2 / "config.yaml").read_text() == "worker:\n  name: PROD\n"  # intacto
+assert len(updater.list_backups(app2)) >= 1
+print("12. update() end-to-end (release simulada): OK")
+
 print("\nTODOS LOS TESTS DEL UPDATER OK")

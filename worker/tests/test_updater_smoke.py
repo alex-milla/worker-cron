@@ -178,4 +178,50 @@ print("14. restore elimina ficheros nuevos: OK")
 assert (fresh / "VERSION").read_text().strip() == "1.0"
 print("15. VERSION restaurada: OK")
 
+# 16. check_writable no molesta cuando hay permisos
+updater.check_writable(fresh)
+print("16. check_writable con permisos: OK")
+
+# 17. los temporales de escritura atomica nunca entran en el manifiesto
+tm = tmp / "tmpscan"
+tm.mkdir()
+(tm / "a.py").write_text("x\n")
+(tm / "a.py.tmp-upd").write_text("basura\n")
+assert all(not k.endswith(".tmp-upd") for k in updater.build_manifest(tm))
+print("17. .tmp-upd fuera del manifiesto: OK")
+
+import os  # noqa: E402
+
+if os.name == "posix" and os.geteuid() != 0:
+    # 18. fichero read-only (de otro dueño) + directorio escribible: os.replace
+    #     funciona igual. Es el caso real: git pull como root + servicio cronworker.
+    d = tmp / "atomic"
+    d.mkdir()
+    target = d / "cronworker.py"
+    target.write_text("viejo\n")
+    os.chmod(target, 0o444)
+    srcf = tmp / "nuevo.py"
+    srcf.write_text("nuevo\n")
+    updater._atomic_copy(srcf, target)
+    assert target.read_text() == "nuevo\n"
+    v = d / "VERSION"
+    v.write_text("1.0\n")
+    os.chmod(v, 0o444)
+    updater._atomic_write(v, "2.0\n")
+    assert v.read_text() == "2.0\n"
+    print("18. escritura atomica sobre fichero read-only: OK")
+
+    # 19. directorio no escribible: error claro con el comando de arreglo
+    ro = tmp / "readonly"
+    ro.mkdir()
+    os.chmod(ro, 0o555)
+    try:
+        updater.check_writable(ro)
+        raise AssertionError("check_writable debia fallar en un directorio read-only")
+    except RuntimeError as exc:
+        assert "chown -R" in str(exc), str(exc)
+    finally:
+        os.chmod(ro, 0o755)
+    print("19. check_writable sugiere el chown: OK")
+
 print("\nTODOS LOS TESTS DEL UPDATER OK")

@@ -14,6 +14,7 @@ Funciones puras (sin Flask): tejibles desde tests y desde la GUI.
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import json
 import os
@@ -109,6 +110,67 @@ def sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+TMP_SUFFIX = ".tmp-upd"
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Escribe con temporal + os.replace.
+
+    `os.replace` es un rename(2): solo necesita permiso de escritura en el
+    DIRECTORIO, no en el fichero destino. Así una actualización funciona
+    aunque los ficheros instalados sean de root (p. ej. tras un `git pull`
+    hecho como root) y el servicio corra como `cronworker`.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + TMP_SUFFIX)
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _atomic_copy(src: Path, dst: Path) -> None:
+    """Igual que _atomic_write pero binario, preservando metadatos."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + TMP_SUFFIX)
+    shutil.copy2(src, tmp)
+    os.replace(tmp, dst)
+
+
+def current_user() -> str:
+    """Usuario efectivo del proceso (para mensajes de error accionables)."""
+    try:
+        return getpass.getuser()
+    except Exception:  # noqa: BLE001 - solo es cosmético
+        return "?"
+
+
+def check_writable(app_root: Path) -> None:
+    """Comprueba de verdad que el proceso puede escribir en el árbol.
+
+    Un error claro ANTES de descargar evita el `EACCES` críptico a mitad de
+    actualización (caso típico: `git pull` como root deja los ficheros de
+    root y el servicio corre como otro usuario).
+    """
+    targets = [app_root]
+    data = app_root / "data"
+    if data.is_dir():
+        targets.append(data)
+    for target in targets:
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            probe = target / TMP_SUFFIX
+            probe.write_text("", encoding="utf-8")
+            probe.unlink()
+        except OSError as exc:
+            user = current_user()
+            raise RuntimeError(
+                f"No puedo escribir en {target} ({exc.strerror or exc}). "
+                f"El servicio corre como '{user}' y los ficheros son de otro "
+                f"usuario. Ejecuta:\n"
+                f"  sudo chown -R {user}:{user} {app_root}\n"
+                f"y haz los 'git pull' como '{user}' (no como root)."
+            ) from exc
+
+
 def is_sensitive(rel: str) -> bool:
     rel = rel.replace("\\", "/")
     return rel in SENSITIVE_FILES or rel.startswith(SENSITIVE_PREFIXES)
@@ -121,6 +183,8 @@ def build_manifest(root: Path) -> dict[str, str]:
         if path.is_dir():
             continue
         rel = path.relative_to(root).as_posix()
+        if rel.endswith(TMP_SUFFIX):
+            continue
         if rel in SENSITIVE_FILES or is_sensitive(rel):
             continue
         if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
@@ -140,14 +204,12 @@ def load_manifest(path: Path) -> dict[str, str]:
 
 
 def save_manifest(path: Path, version: str, files: dict[str, str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "version": version,
         "generated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         "files": files,
     }
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False),
-                    encoding="utf-8")
+    _atomic_write(path, json.dumps(payload, indent=2, ensure_ascii=False))
 
 
 # ------------------------------------------------------------------- sync --
@@ -175,9 +237,7 @@ def sync_from_source(src: Path, app_root: Path, version: str) -> dict:
             dst.parent.mkdir(parents=True, exist_ok=True)
             # escritura atómica: nunca se deja un .py a medio escribir si el
             # proceso muere a mitad (p. ej. timeout de gunicorn).
-            tmp_dst = dst.with_name(dst.name + ".tmp-upd")
-            shutil.copy2(src / rel, tmp_dst)
-            os.replace(tmp_dst, dst)
+            _atomic_copy(src / rel, dst)
             copied += 1
         except OSError as exc:
             errors += 1
@@ -244,7 +304,7 @@ def create_backup(app_root: Path) -> Path:
             continue
         target = dest / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, target)
+        _atomic_copy(src, target)
     # el backup lleva SIEMPRE su manifiesto (aunque el original no existiera),
     # para que restore_backup sepa exactamente qué ficheros gestionaba.
     save_manifest(dest / MANIFEST_PATH, installed_version(app_root), manifest)
@@ -267,6 +327,7 @@ def restore_backup(backup_name: str, app_root: Path) -> dict:
     if not backup_dir.is_dir():
         raise ValueError("Backup no encontrado")
 
+    check_writable(app_root)
     backup_files = load_manifest(backup_dir / MANIFEST_PATH)
     if not backup_files:
         raise ValueError("El backup no contiene manifiesto: no se puede restaurar")
@@ -279,7 +340,7 @@ def restore_backup(backup_name: str, app_root: Path) -> dict:
             continue
         dst = app_root / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        _atomic_copy(src, dst)
         copied += 1
     # rollback completo: los ficheros gestionados que introdujo la versión
     # posterior y que no existen en el backup también se eliminan.
@@ -352,6 +413,7 @@ def update(app_root: Path, token: str | None = None, force: bool = False) -> dic
         return {"updated": False, "current": current, "remote": remote,
                 "message": "Ya estás en la última versión"}
 
+    check_writable(app_root)
     backup = create_backup(app_root)
     tmp = Path(tempfile.mkdtemp(prefix="cron-upd-"))
     try:
@@ -365,7 +427,7 @@ def update(app_root: Path, token: str | None = None, force: bool = False) -> dic
         shutil.rmtree(tmp, ignore_errors=True)
 
     if not result["errors"]:
-        (app_root / "VERSION").write_text(remote + "\n", encoding="utf-8")
+        _atomic_write(app_root / "VERSION", remote + "\n")
     return {
         "updated": True, "current": current, "remote": remote,
         "backup": backup.name, **result,

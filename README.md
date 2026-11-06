@@ -29,11 +29,36 @@ systemctl enable --now cron-gui cron-worker
 
 La GUI del worker (Apache :80 → gunicorn → Flask) pide sesión en `/login`.
 La primera vez se crea el usuario **admin / admin**; cámbiala en la
-pantalla «Contraseña» al entrar. Desde la GUI se crean, editan, pausan y
-borran tareas con validación de la expresión cron (cualquier cambio local
-queda marcado `pending_sync` para empujarse al hosting cuando la API esté lista).
+pantalla «Contraseña» al entrar (mientras no la cambies verás un aviso en
+todas las pantallas). Desde la GUI se crean, editan, pausan y borran tareas
+con validación de la expresión cron (cualquier cambio local queda marcado
+`pending_sync` para empujarse al hosting cuando la API esté lista).
+
+### Actualizar el worker
+
+Dos vías, ambas con backup previo automático:
+
+1. **Desde la GUI**: *Actualizaciones → Instalar última versión*. Descarga la
+   release de GitHub, respalda el código en `worker/data/backups/` y sincroniza
+   por manifiesto SHA-256. Después: `systemctl restart cron-gui cron-worker`.
+2. **Desde el repo**:
+   ```bash
+   sudo -u cronworker git -C /opt/worker-cron pull
+   sudo systemctl restart cron-gui cron-worker
+   ```
+
+> **Importante:** haz siempre `git pull` **como `cronworker`** (o ejecuta
+> `sudo chown -R cronworker:cronworker /opt/worker-cron` después). Si el pull
+> se hace como root, los ficheros cambian de dueño y la actualización desde la
+> GUI falla con `[Errno 13] Permission denied: .../worker/VERSION`, porque el
+> servicio corre como `cronworker`. Desde v0.1.3 el updater escribe con
+> `os.replace` (solo necesita permiso sobre el directorio) y, si aun así no
+> puede escribir, muestra el comando exacto para arreglarlo.
 
 ### Panel (hosting compartido)
 
 Sube `public_html/`, copia `config/config.example.php` a `config/config.php`
 y apunta el dominio a `public_html/`.
+
+Ojo: el auto-update del worker **solo sincroniza `worker/`**. Los cambios en
+`public_html/` se despliegan subiendo los ficheros al hosting.

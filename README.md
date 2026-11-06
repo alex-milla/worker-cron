@@ -60,5 +60,17 @@ Dos vías, ambas con backup previo automático:
 Sube `public_html/`, copia `config/config.example.php` a `config/config.php`
 y apunta el dominio a `public_html/`.
 
+Requisitos: **PHP 8.0+ con `pdo_sqlite`**. El esquema de la BD
+(`data/panel.sqlite`) se crea **automáticamente** la primera vez que la app
+abre la conexión (`src/Database.php`), así que ya no hay que cargar
+`sql/schema.sqlite.sql` a mano. `data/` queda protegido por el `.htaccess`
+raíz (`RewriteRule ^data(/|$) - [F,L]`), además del bloqueo por extensión.
+
+Comprobar la capa de datos sin desplegar nada:
+
+```bash
+php tools/panel_smoke.php     # 37 comprobaciones: esquema, CRUD, revisión, cron
+```
+
 Ojo: el auto-update del worker **solo sincroniza `worker/`**. Los cambios en
 `public_html/` se despliegan subiendo los ficheros al hosting.

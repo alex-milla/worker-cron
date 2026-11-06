@@ -132,6 +132,26 @@ def change_password(
     return True
 
 
+def change_username(conn: sqlite3.Connection, user_id: int, new_username: str) -> bool:
+    """Cambia el nombre de usuario. False si ya existe (UNIQUE)."""
+    try:
+        cur = conn.execute(
+            "UPDATE users SET username = ? WHERE id = ?", (new_username, user_id)
+        )
+        conn.commit()
+        return cur.rowcount == 1
+    except sqlite3.IntegrityError:
+        conn.rollback()
+        return False
+
+
+def get_username(conn: sqlite3.Connection, user_id: int) -> str:
+    row = conn.execute(
+        "SELECT username FROM users WHERE id = ?", (user_id,)
+    ).fetchone()
+    return row["username"] if row else ""
+
+
 def uses_default_password(conn: sqlite3.Connection) -> bool:
     row = conn.execute(
         "SELECT value FROM meta WHERE key = 'default_password'"

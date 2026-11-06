@@ -107,4 +107,40 @@ r = c3.post("/login", data={"username": "admin", "password": "nueva-clave-1", "c
 assert r.status_code == 302
 print("10. cambiar contrasena + logout + relogin: OK")
 
+# 11. /password renderiza el CSRF oculto NO vacio (bug del Bad Request)
+import re as _re  # noqa: E402
+
+c4 = app.test_client()
+c4.get("/login")
+with c4.session_transaction() as s:
+    csrf4 = s["csrf"]
+c4.post("/login", data={"username": "admin", "password": "nueva-clave-1", "csrf": csrf4})
+page_html = c4.get("/password").data.decode("utf-8")
+m = _re.search(r'name="csrf" value="([^"]*)"', page_html)
+assert m and m.group(1), "el campo csrf oculto de /password esta vacio"
+print("11. /password incluye csrf en el form: OK")
+
+# 12. cambiar nombre de usuario con el csrf extraido de la pagina (fluxo browser)
+new_csrf = m.group(1)
+r = c4.post("/password", data={"username": "gestor", "csrf": new_csrf})
+assert r.status_code == 302, r.data[:200]
+c4.post("/logout", data={"csrf": new_csrf})
+c5 = app.test_client()
+c5.get("/login")
+with c5.session_transaction() as s:
+    csrf5 = s["csrf"]
+r = c5.post("/login", data={"username": "gestor", "password": "nueva-clave-1", "csrf": csrf5})
+assert r.status_code == 302, "no se puede entrar con el usuario renombrado"
+print("12. cambio de nombre de usuario: OK")
+
+# 13. nombre de usuario duplicado rechazado
+page_html = c5.get("/password").data.decode("utf-8")
+new_csrf = _re.search(r'name="csrf" value="([^"]*)"', page_html).group(1)
+page_html = c5.post("/password", data={"username": "gestor", "csrf": new_csrf}).data.decode()
+page_html = c5.get("/password").data.decode("utf-8")
+new_csrf = _re.search(r'name="csrf" value="([^"]*)"', page_html).group(1)
+r = c5.post("/password", data={"username": "x", "csrf": new_csrf})  # corto
+assert b"al menos 3" in r.data
+print("13. validacion usuario: OK")
+
 print("\nTODOS LOS TESTS OK")

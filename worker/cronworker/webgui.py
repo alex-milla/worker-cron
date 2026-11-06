@@ -455,18 +455,21 @@ UPDATES_CONTENT = """<section class="card">
 </section>"""
 
 PASSWORD_CONTENT = """<section class="card" style="max-width:480px">
-  <h2>Cambiar contraseña</h2>
+  <h2>Perfil y contraseña</h2>
   {% if error %}<div class="alert-err">{{ error }}</div>{% endif %}
   <form method="post" action="{{ url_for('password_page') }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
+    <div class="field"><label>Nombre de usuario</label>
+      <input type="text" name="username" required minlength="3" value="{{ current_username }}"
+             autocomplete="username">
+      <div class="helper">Con esto entrarás la próxima vez</div></div>
     <div class="field"><label>Contraseña actual</label>
-      <input type="password" name="old_password" required
-             autocomplete="current-password"></div>
+      <input type="password" name="old_password" autocomplete="current-password"></div>
     <div class="field"><label>Nueva contraseña</label>
-      <input type="password" name="new_password" required minlength="8"
+      <input type="password" name="new_password" minlength="8"
              autocomplete="new-password"></div>
     <div class="field"><label>Repite la nueva contraseña</label>
-      <input type="password" name="new_password2" required minlength="8"
+      <input type="password" name="new_password2" minlength="8"
              autocomplete="new-password"></div>
     <div class="form-actions">
       <a class="btn cancel" href="{{ url_for('dashboard') }}">Cancelar</a>
@@ -596,29 +599,56 @@ def create_app(config_path: str | None = None) -> Flask:
 
     @app.route("/password", methods=["GET", "POST"])
     def password_page():
+        fresh_csrf()
         error = ""
+        uid = current_user_id()
         if request.method == "POST":
             if not check_csrf():
                 abort(400)
             old = request.form.get("old_password", "")
             new = request.form.get("new_password", "")
             new2 = request.form.get("new_password2", "")
-            if len(new) < 8:
-                error = "La nueva contraseña debe tener al menos 8 caracteres"
-            elif new != new2:
-                error = "Las contraseñas nuevas no coinciden"
-            else:
-                conn = db()
-                try:
-                    ok = store.change_password(conn, current_user_id(), old, new)
-                    flash("Contraseña actualizada", "ok") if ok else None
-                finally:
-                    conn.close()
-                if ok:
+            conn = db()
+            try:
+                # 1) nombre de usuario (opcional)
+                current_username = store.get_username(conn, uid)
+                new_username = request.form.get("username", "").strip()
+                if new_username and new_username != current_username:
+                    if len(new_username) < 3:
+                        error = "El nombre de usuario debe tener al menos 3 caracteres"
+                    elif not store.change_username(conn, uid, new_username):
+                        error = "Ese nombre de usuario ya está en uso"
+                    else:
+                        session["username"] = new_username
+                        flash("Usuario actualizado", "ok")
+                # 2) contraseña (si se han rellenado los campos)
+                if not error and (old or new or new2):
+                    if len(new) < 8:
+                        error = "La nueva contraseña debe tener al menos 8 caracteres"
+                    elif new != new2:
+                        error = "Las contraseñas nuevas no coinciden"
+                    elif not store.change_password(conn, uid, old, new):
+                        error = "La contraseña actual no es correcta"
+                    else:
+                        flash("Contraseña actualizada", "ok")
+                if not error:
                     return redirect(url_for("dashboard"))
-                error = "La contraseña actual no es correcta"
-        return page("Contraseña", render_template_string(
-            PASSWORD_CONTENT, error=error))
+                current_username = store.get_username(conn, uid)
+            finally:
+                conn.close()
+        else:
+            conn = db()
+            try:
+                current_username = store.get_username(conn, uid)
+            finally:
+                conn.close()
+        content = render_template_string(
+            PASSWORD_CONTENT,
+            error=error,
+            csrf=session["csrf"],
+            current_username=current_username,
+        )
+        return page("Perfil", content)
 
     # ---- dashboard ----
 

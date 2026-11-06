@@ -28,6 +28,12 @@ if ($path !== '/' && is_file($file)) {
     return false;  // el servidor embebido sirve el estático
 }
 
+// La API se sirve por api/index.php (como el RewriteRule del hosting)
+if (preg_match('#^/api(/|$)#', $path) === 1) {
+    require $root . '/api/index.php';
+    return true;
+}
+
 require $root . '/index.php';
 
 return true;

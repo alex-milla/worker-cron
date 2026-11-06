@@ -56,6 +56,37 @@ final class Auth
         return hash_equals('Bearer ' . $token, trim($headerValue));
     }
 
+    /**
+     * Cabecera Authorization de la petición actual.
+     *
+     * Apache no la expone como HTTP_AUTHORIZATION por defecto; el .htaccess
+     * la pasa por entorno (REDIRECT_HTTP_AUTHORIZATION) y getallheaders()
+     * cubre FPM/CGI.
+     */
+    public static function authorizationHeader(): string
+    {
+        foreach (['HTTP_AUTHORIZATION', 'REDIRECT_HTTP_AUTHORIZATION'] as $key) {
+            if (!empty($_SERVER[$key])) {
+                return (string)$_SERVER[$key];
+            }
+        }
+
+        if (function_exists('getallheaders')) {
+            foreach (getallheaders() as $name => $value) {
+                if (strcasecmp((string)$name, 'Authorization') === 0) {
+                    return (string)$value;
+                }
+            }
+        }
+
+        return '';
+    }
+
+    public static function apiTokenValid(): bool
+    {
+        return self::verifyApiToken(self::authorizationHeader());
+    }
+
     /** ¿Hay alguna forma de entrar? (usuario en BD o hash en config.php) */
     public static function isConfigured(): bool
     {

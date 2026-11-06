@@ -126,6 +126,59 @@ try {
     $dash = (Invoke-WebRequest -Uri "$base/" -WebSession $s).Content
     Check 'la tarea no cambió' ($dash -match '30 3 \* \* \*')
 
+    # 8b. API v1 (la que consumirá el worker)
+    $api = @{ Authorization = 'Bearer test-token' }
+    $json = 'application/json'
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/version" -SkipHttpErrorCheck
+    Check 'API sin token = 401' ($r.StatusCode -eq 401)
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/version" -Headers @{ Authorization = 'Bearer malo' } -SkipHttpErrorCheck
+    Check 'API token malo = 401' ($r.StatusCode -eq 401)
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/version" -Headers $api
+    Check 'API version = 200' ($r.StatusCode -eq 200)
+    Check 'X-Revision en la respuesta' ($r.Headers.ContainsKey('X-Revision'))
+    $rev = ($r.Content | ConvertFrom-Json).revision
+    Check 'revision es un número' ($rev -is [int] -or $rev -is [long])
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/jobs" -Headers $api
+    $payload = $r.Content | ConvertFrom-Json
+    Check 'API jobs = 200' ($r.StatusCode -eq 200)
+    Check 'API jobs incluye la tarea' ($payload.count -ge 1 -and $payload.jobs[0].name -eq 'Backup diario')
+    Check 'API jobs trae el comando' ($payload.jobs[0].command -match 'tar')
+    Check 'API jobs no filtra hashes' (-not ($r.Content -match 'pass_hash'))
+
+    $body = @{
+        job_id = 1; started_at = '2026-11-06T23:00:00'; finished_at = '2026-11-06T23:00:05'
+        status = 'ok'; exit_code = 0; output = 'linea de salida'
+    } | ConvertTo-Json
+    $r = Invoke-WebRequest -Uri "$base/api/v1/results" -Method Post -Headers $api -ContentType $json -Body $body -SkipHttpErrorCheck
+    Check 'API results = 201' ($r.StatusCode -eq 201) "status=$($r.StatusCode)"
+
+    $r = Invoke-WebRequest -Uri "$base/runs" -WebSession $s
+    Check 'la ejecución aparece en /runs' ($r.Content -match 'linea de salida')
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/results" -Method Post -Headers $api -ContentType $json -SkipHttpErrorCheck `
+        -Body '{"job_id":999,"started_at":"2026-11-06T23:00:00","status":"ok"}'
+    Check 'API results job inexistente = 404' ($r.StatusCode -eq 404)
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/results" -Method Post -Headers $api -ContentType $json -SkipHttpErrorCheck -Body '{}'
+    Check 'API results sin datos = 400' ($r.StatusCode -eq 400)
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/results" -Method Post -Headers $api -ContentType $json -SkipHttpErrorCheck -Body 'no-es-json'
+    Check 'API results JSON inválido = 400' ($r.StatusCode -eq 400)
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/heartbeat" -Method Post -Headers $api -ContentType $json `
+        -Body (@{ name = 'lxc-e2e'; revision = $rev } | ConvertTo-Json)
+    Check 'API heartbeat = 200' ($r.StatusCode -eq 200)
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/nope" -Headers $api -SkipHttpErrorCheck
+    Check 'API ruta desconocida = 404' ($r.StatusCode -eq 404)
+
+    $r = Invoke-WebRequest -Uri "$base/api/v1/version" -Method Post -Headers $api -SkipHttpErrorCheck
+    Check 'API método no permitido = 405' ($r.StatusCode -eq 405)
+
     # 9. pausar
     $r = Invoke-WebRequest -Uri "$base/jobs/1/toggle" -Method Post -Body @{ csrf = $csrf } `
         -WebSession $s -MaximumRedirection 0 -SkipHttpErrorCheck -ErrorAction SilentlyContinue

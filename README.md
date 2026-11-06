@@ -89,5 +89,35 @@ php -S 127.0.0.1:8099 -t public_html tools/dev_server.php
 ```
 (`tools/` vive fuera de `public_html`, no se sube al hosting.)
 
+### API para el worker
+
+Autenticación: `Authorization: Bearer <api_token>` (el de `config.php`).
+Todas las respuestas llevan `X-Revision`, y el worker hace **pull** (nunca se
+le empuja nada).
+
+| Método | Ruta | Devuelve |
+|---|---|---|
+| GET | `/api/v1/version` | `{revision}` — polling barato |
+| GET | `/api/v1/jobs` | `{revision, count, jobs:[…]}` — solo tareas activas |
+| POST | `/api/v1/results` | registra una ejecución → `201 {id}` |
+| POST | `/api/v1/heartbeat` | aviso de vida → `200 {ok}` |
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" https://panel.example.com/api/v1/version
+curl -H "Authorization: Bearer $TOKEN" https://panel.example.com/api/v1/jobs
+
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"job_id":1,"started_at":"2026-11-06T23:00:00","finished_at":"2026-11-06T23:00:05","status":"ok","exit_code":0,"output":"ok"}' \
+  https://panel.example.com/api/v1/results
+
+curl -X POST -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"name":"lxc-cron-worker","revision":7}' \
+  https://panel.example.com/api/v1/heartbeat
+```
+
+Estados válidos en `results`: `ok`, `failed`, `timeout`. El `output` se trunca
+a 64 KiB y el cuerpo máximo es 1 MiB. Si Apache no pasa la cabecera
+`Authorization`, el `.htaccess` ya la reexpone vía entorno.
+
 Ojo: el auto-update del worker **solo sincroniza `worker/`**. Los cambios en
 `public_html/` se despliegan subiendo los ficheros al hosting.

@@ -5,3 +5,5 @@ PyYAML>=6.0
 
 # GUI local
 flask>=3.0
+# Validación y cálculo de próximas ejecuciones de expresiones cron
+croniter>=2.0

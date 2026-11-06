@@ -21,10 +21,17 @@ y un worker (LXC, Python 3) que ejecuta los comandos y reporta los resultados.
 ### Worker (LXC)
 
 ```bash
-cp worker/config.example.yaml worker/config.yaml
-pip install -r worker/requirements.txt
-python -m cronworker.scheduler
+git clone https://github.com/alex-milla/worker-cron.git /opt/worker-cron
+bash /opt/worker-cron/worker/deploy/install.sh
+nano /opt/worker-cron/worker/config.yaml   # base_url y api_token del panel
+systemctl enable --now cron-gui cron-worker
 ```
+
+La GUI del worker (Apache :80 → gunicorn → Flask) pide sesión en `/login`.
+La primera vez se crea el usuario **admin / admin**; cámbiala en la
+pantalla «Contraseña» al entrar. Desde la GUI se crean, editan, pausan y
+borran tareas con validación de la expresión cron (cualquier cambio local
+queda marcado `pending_sync` para empujarse al hosting cuando la API esté lista).
 
 ### Panel (hosting compartido)
 
